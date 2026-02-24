@@ -2,14 +2,8 @@ import asyncio
 import os
 import logging
 import re
-import json
-import pandas as pd
-from datetime import datetime
 from telethon import TelegramClient, events
-from telethon.tl.types import MessageMediaDocument
 import urllib.request
-import urllib.parse
-from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import OpenDartReader
@@ -84,24 +78,27 @@ async def send_weekly_info(mode):
     await bot_client.send_message(MY_TELEGRAM_ID, response.text)
 
 # 채널 메시지(선진짱 등) 자동 요약
-@user_client.on(events.NewMessage(chats=WATCH_CHANNELS))
-async def on_channel_msg(event):
-    urls = re.findall(r'https?://[^\s]+', event.text or "")
-    if urls:
-        text = fetch_webpage_text(urls[0])
-        if text:
-            res = client.models.generate_content(model='gemini-2.0-flash', contents=[LINK_PROMPT + f"\n내용: {text}"])
-            await bot_client.send_message(MY_TELEGRAM_ID, f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}")
+if WATCH_CHANNELS:
+    @user_client.on(events.NewMessage(chats=WATCH_CHANNELS))
+    async def on_channel_msg(event):
+        urls = re.findall(r'https?://[^\s]+', event.text or "")
+        if urls:
+            text = fetch_webpage_text(urls[0])
+            if text:
+                res = client.models.generate_content(model='gemini-2.0-flash', contents=[LINK_PROMPT + f"\n내용: {text}"])
+                await bot_client.send_message(MY_TELEGRAM_ID, f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}")
 
 # 봇 명령어 처리
 @bot_client.on(events.NewMessage())
 async def on_bot_msg(event):
     if event.chat_id != MY_TELEGRAM_ID:
         return
-    text = event.text
+    text = event.text or ""
 
     if text.startswith('/재무'):
         comp = text.replace('/재무', '').strip()
+        if not comp:
+            return await event.reply("❌ 종목명을 입력하세요. 예: /재무 삼성전자")
         await event.reply(f"📊 **{comp}**의 재무 데이터를 분석 중입니다...")
         res = await get_finance_summary(comp)
         await event.reply(f"📈 **[{comp} 재무 트렌드 분석]**\n\n{res}")
@@ -113,6 +110,8 @@ async def on_bot_msg(event):
 
     elif text.startswith('/공시'):
         comp = text.replace('/공시', '').strip()
+        if not comp:
+            return await event.reply("❌ 종목명을 입력하세요. 예: /공시 삼성전자")
         # ✅ 수정 포인트 3: 검색 시작일을 2025년으로 업데이트하여 최신성 확보
         reports = dart.list(comp, start='2025-01-01')
         if reports is None or reports.empty:
@@ -132,8 +131,8 @@ async def main():
 
     # 스케줄러 설정 (목/금 정기 브리핑)
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
-    scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9, args=['shop'])
-    scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, args=['out'])
+    scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9, kwargs={'mode': 'shop'})
+    scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, kwargs={'mode': 'out'})
     scheduler.start()
 
     await bot_client.send_message(MY_TELEGRAM_ID, "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n🔹 명령어: /재무, /공시, /장보기, /나들이\n🔹 자동 기능: 외부 채널 링크 자동 요약 가동 중")
