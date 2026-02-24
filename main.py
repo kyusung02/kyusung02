@@ -119,7 +119,18 @@ async def get_finance_summary(company):
         # 핵심 계정(매출액, 영업이익, 당기순이익)만 필터링해 프롬프트 토큰 절약
         essential = df[df['account_nm'].str.contains('매출액|영업이익|당기순이익', na=False)]
         # 당기(thsstrm) vs 전기(frmtrm) 비교가 가능한 형태로 문자열 변환
-        data_str = essential[['account_nm', 'thsstrm_amount', 'frmtrm_amount']].to_string()
+        # DART API 컬럼명: thstrm_amount(당기), thstrm_add_amount(당기누적), frmtrm_amount(전기)
+        # 어느 컬럼이 실제로 존재하는지 확인 후 사용
+        amount_col = next(
+            (c for c in ['thstrm_amount', 'thstrm_add_amount'] if c in essential.columns),
+            None
+        )
+        if amount_col is None:
+            return f"⚠️ 분석 중 오류가 발생했습니다: 당기금액 컬럼을 찾을 수 없습니다. (컬럼: {list(essential.columns)})"
+        cols = ['account_nm', amount_col]
+        if 'frmtrm_amount' in essential.columns:
+            cols.append('frmtrm_amount')
+        data_str = essential[cols].to_string()
 
         response = client.models.generate_content(
             model='gemini-2.0-flash',
