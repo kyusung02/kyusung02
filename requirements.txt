@@ -1,0 +1,6 @@
+telethon
+google-genai
+apscheduler
+pandas
+opendartreader
+youtube-transcript-api
