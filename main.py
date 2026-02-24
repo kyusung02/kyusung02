@@ -47,7 +47,9 @@ async def get_finance_summary(company):
 
         # 핵심 계정(매출액, 영업이익, 당기순이익) 필터링
         essential = df[df['account_nm'].str.contains('매출액|영업이익|당기순이익', na=False)]
-        data_str = essential[['account_nm', 'thsstrm_amount', 'frmtrm_amount']].to_string()
+        # DART API 컬럼명: thstrm_amount(당기), frmtrm_amount(전기)
+        cols = [c for c in ['account_nm', 'thstrm_amount', 'frmtrm_amount'] if c in essential.columns]
+        data_str = essential[cols].to_string()
 
         response = client.models.generate_content(
             model='gemini-2.0-flash',
