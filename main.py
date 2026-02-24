@@ -52,7 +52,7 @@ async def get_finance_summary(company):
         data_str = essential[cols].to_string()
 
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=[FINANCE_PROMPT + f"\n\n종목: {company}\n데이터:\n{data_str}"]
         )
         return response.text
@@ -76,7 +76,7 @@ bot_client = TelegramClient("bot_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
 async def send_weekly_info(mode):
     prompt = SHOPPING_PROMPT if mode == 'shop' else OUTING_PROMPT
-    response = client.models.generate_content(model='gemini-2.0-flash', contents=[prompt])
+    response = client.models.generate_content(model='gemini-1.5-flash', contents=[prompt])
     await bot_client.send_message(MY_TELEGRAM_ID, response.text)
 
 # 채널 메시지(선진짱 등) 자동 요약
@@ -87,7 +87,7 @@ if WATCH_CHANNELS:
         if urls:
             text = fetch_webpage_text(urls[0])
             if text:
-                res = client.models.generate_content(model='gemini-2.0-flash', contents=[LINK_PROMPT + f"\n내용: {text}"])
+                res = client.models.generate_content(model='gemini-1.5-flash', contents=[LINK_PROMPT + f"\n내용: {text}"])
                 await bot_client.send_message(MY_TELEGRAM_ID, f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}")
 
 # 봇 명령어 처리
