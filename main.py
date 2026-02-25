@@ -195,23 +195,70 @@ async def send_weekly_info(mode):
 # 5. 이벤트 핸들러
 # ==========================================
 
+def extract_youtube_id(url):
+    """유튜브 URL에서 영상 ID를 추출합니다."""
+    match = re.search(r'(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
+    return match.group(1) if match else None
+
+
 @user_client.on(events.NewMessage(chats=WATCH_CHANNELS))
 async def on_channel_msg(event):
     """
     WATCH_CHANNELS 에 등록된 채널에 새 메시지가 올라올 때 자동 실행됩니다.
 
     동작 흐름:
-        1) 메시지 본문에서 URL 추출
-        2) 첫 번째 URL의 웹페이지 본문 크롤링
-        3) Gemini로 핵심 요약 생성
-        4) 봇을 통해 내 계정으로 [네모 봇 인사이트 요약] 메시지 전송
+        [유튜브] YouTube URL 감지 → 자막 추출 → Gemini 요약 → 원문 링크 첨부
+        [기사/블로그] 일반 URL 감지 → 웹 크롤링 → Gemini 요약 → 원문 링크 첨부
+        [PDF] 문서 첨부 감지 → 파일 다운로드 → 캡션·파일명을 출처로 안내
     """
     urls = re.findall(r'https?://[^\s]+', event.text or "")
+
+    # ── 유튜브 ──────────────────────────────────────────
+    if urls and re.search(r'(youtube\.com/watch|youtu\.be/)', urls[0]):
+        yt_url = urls[0]
+        vid_id = extract_youtube_id(yt_url)
+        if vid_id:
+            try:
+                segments = YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
+                transcript = ' '.join(s['text'] for s in segments)[:5000]
+                res = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=[LINK_PROMPT + f"\n내용: {transcript}"]
+                )
+                await bot_client.send_message(
+                    MY_TELEGRAM_ID,
+                    f"▶️ **[유튜브 인사이트 요약]**\n{res.text}\n\n📎 원문: {yt_url}"
+                )
+            except Exception as e:
+                await bot_client.send_message(
+                    MY_TELEGRAM_ID,
+                    f"▶️ **[유튜브]** 자막을 가져올 수 없습니다 ({e})\n📎 원문: {yt_url}"
+                )
+        return
+
+    # ── 기사 / 블로그 ────────────────────────────────────
     if urls:
         text = fetch_webpage_text(urls[0])
         if text:
-            res = client.models.generate_content(model='gemini-2.0-flash', contents=[LINK_PROMPT + f"\n내용: {text}"])
-            await bot_client.send_message(MY_TELEGRAM_ID, f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}")
+            res = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[LINK_PROMPT + f"\n내용: {text}"]
+            )
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}\n\n📎 원문: {urls[0]}"
+            )
+        return
+
+    # ── PDF (문서 첨부) ──────────────────────────────────
+    if event.document and getattr(event.document, 'mime_type', '') == 'application/pdf':
+        file_path = await event.download_media(file=DOWNLOAD_DIR)
+        caption = (event.text or '').strip() or '(제목 없음)'
+        filename = os.path.basename(file_path) if file_path else '다운로드 실패'
+        await bot_client.send_message(
+            MY_TELEGRAM_ID,
+            f"📄 **[PDF 수신]**\n{caption}\n\n📎 출처 파일명: {filename}"
+        )
 
 
 @bot_client.on(events.NewMessage())
