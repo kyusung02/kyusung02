@@ -122,6 +122,35 @@ FINANCE_PROMPT = """당신은 CFA 자격을 보유한 국내 대형 증권사 �
 
 수치 기반의 객관적 분석을 원칙으로 하며, 단정적 표현 대신 확률적·조건부 표현을 사용하세요."""
 
+# PDF 리포트 분석: 업로드된 주식 리서치 리포트를 전문 애널리스트 관점에서 요약
+PDF_PROMPT = """당신은 CFA 자격을 보유한 국내 대형 증권사 리서치센터 수석 애널리스트입니다.
+첨부된 주식 리서치 리포트/투자 보고서를 분석하여 아래 형식으로 정리하세요.
+
+[PDF 리포트 분석]
+
+■ 리포트 개요
+- 발행사 / 애널리스트 / 발행일
+- 분석 대상 종목 및 목표주가·투자의견 (있을 경우)
+
+■ 핵심 투자 포인트 (3가지)
+①
+②
+③
+
+■ 실적 전망 요약
+- 주요 재무 추정치 (매출·영업이익 등) 및 근거
+
+■ 밸류에이션 분석
+- 적용 방법론 (PER, PBR, DCF 등) 및 목표주가 산출 근거
+
+■ 리스크 요인
+- 투자 의견을 훼손할 수 있는 주요 리스크 2~3가지
+
+■ 총평
+- 기존 컨센서스 대비 차별화 포인트 및 주목 이유 한 줄 요약
+
+객관적이고 간결하게 핵심만 서술하세요."""
+
 # 주간 장보기: 41개월 여아 포함 3인 가족 기준 저당/건강 식단 + 장보기 목록 생성
 SHOPPING_PROMPT = "41개월 여아가 있는 3인 가족을 위한 주말 저당/건강 식단과 장보기 리스트를 짜주세요."
 
@@ -250,7 +279,7 @@ async def on_channel_msg(event):
     동작 흐름:
         [유튜브] YouTube URL 감지 → 자막 추출 → Gemini 요약 → 원문 링크 첨부
         [기사/블로그] 일반 URL 감지 → 웹 크롤링 → Gemini 요약 → 원문 링크 첨부
-        [PDF] 문서 첨부 감지 → 파일 다운로드 → 캡션·파일명을 출처로 안내
+        [PDF] 문서 첨부 감지 → 파일 다운로드 → Gemini Files API 업로드 → 리포트 분석 → 파일 삭제
     """
     urls = re.findall(r'https?://[^\s]+', event.text or "")
 
@@ -296,10 +325,36 @@ async def on_channel_msg(event):
         file_path = await event.download_media(file=DOWNLOAD_DIR)
         caption = (event.text or '').strip() or '(제목 없음)'
         filename = os.path.basename(file_path) if file_path else '다운로드 실패'
+
+        if not file_path:
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"📄 **[PDF 수신 실패]**\n{caption}\n\n⚠️ 파일 다운로드에 실패했습니다."
+            )
+            return
+
         await bot_client.send_message(
             MY_TELEGRAM_ID,
-            f"📄 **[PDF 수신]**\n{caption}\n\n📎 출처 파일명: {filename}"
+            f"📄 **[PDF 분석 중...]**\n{caption}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
         )
+        try:
+            # Gemini Files API에 PDF 업로드 → 멀티모달 분석
+            uploaded = client.files.upload(file=file_path)
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[uploaded, PDF_PROMPT]
+            )
+            # 분석 완료 후 Gemini 서버에서 파일 삭제
+            client.files.delete(name=uploaded.name)
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"📊 **[PDF 리포트 분석]**\n_{caption}_\n\n{response.text}\n\n📎 출처: {filename}"
+            )
+        except Exception as e:
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"📄 **[PDF 수신]**\n{caption}\n\n⚠️ 분석 중 오류 발생: {e}\n📎 출처: {filename}"
+            )
 
 
 @bot_client.on(events.NewMessage())
