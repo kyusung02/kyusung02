@@ -109,9 +109,11 @@ async def get_finance_summary(company):
     try:
         # 수정 포인트 1: 함수명 fin_stat_all → finstate_all (패키지 업데이트 반영)
         # 수정 포인트 2: 2024년 데이터를 먼저 찾고 없으면 2023년으로 자동 전환
-        df = dart.finstate_all(company, 2024)
+        year = 2024
+        df = dart.finstate_all(company, year)
         if df is None or df.empty:
-            df = dart.finstate_all(company, 2023)
+            year = 2023
+            df = dart.finstate_all(company, year)
 
         if df is None or df.empty:
             return f"❌ '{company}'의 재무 데이터를 찾을 수 없습니다. (종목명/상장여부 확인)"
@@ -136,7 +138,8 @@ async def get_finance_summary(company):
             model='gemini-2.0-flash',
             contents=[FINANCE_PROMPT + f"\n\n종목: {company}\n데이터:\n{data_str}"]
         )
-        return response.text
+        source_note = f"\n\n📌 출처: DART 전자공시시스템 ({year}년 재무제표)"
+        return response.text + source_note
     except Exception as e:
         return f"⚠️ 분석 중 오류가 발생했습니다: {e}"
 
