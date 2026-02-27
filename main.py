@@ -381,7 +381,9 @@ async def on_bot_msg(event):
         comp = text.replace('/재무', '').strip()
         await event.reply(f"📊 **{comp}**의 재무 데이터를 분석 중입니다...")
         res = await get_finance_summary(comp)
-        await event.reply(f"📈 **[{comp} 재무 트렌드 분석]**\n\n{res}")
+        full = f"📈 **[{comp} 재무 트렌드 분석]**\n\n{res}"
+        for i in range(0, len(full), 4096):
+            await event.reply(full[i:i+4096])
 
     elif text == '/장보기':
         await send_weekly_info('shop')
