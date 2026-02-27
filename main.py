@@ -21,7 +21,7 @@
 
 사용 기술 스택:
   - Telethon  : 텔레그램 클라이언트 & 봇 API
-  - Google Gemini (gemini-2.0-flash) : AI 요약/분석
+  - Google Gemini (gemini-2.0-flash-001) : AI 요약/분석
   - OpenDartReader : 금감원 DART 재무 데이터
   - APScheduler : 비동기 주기 작업 스케줄러
   - Pandas : 재무 데이터프레임 처리
@@ -205,7 +205,7 @@ async def get_finance_summary(company):
         data_str = essential[cols].to_string()
 
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.0-flash-001',
             contents=[FINANCE_PROMPT + f"\n\n종목: {company}\n데이터:\n{data_str}"]
         )
         source_note = f"\n\n📌 출처: DART 전자공시시스템 ({year}년 재무제표)"
@@ -258,7 +258,7 @@ async def send_weekly_info(mode):
         해당 프롬프트로 Gemini 응답을 생성해 내 텔레그램 계정으로 전송합니다.
     """
     prompt = SHOPPING_PROMPT if mode == 'shop' else OUTING_PROMPT
-    response = client.models.generate_content(model='gemini-2.0-flash', contents=[prompt])
+    response = client.models.generate_content(model='gemini-2.0-flash-001', contents=[prompt])
     await bot_client.send_message(MY_TELEGRAM_ID, response.text)
 
 # ==========================================
@@ -295,7 +295,7 @@ async def on_channel_msg(event):
                 segments = YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
                 transcript = ' '.join(s['text'] for s in segments)[:5000]
                 res = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model='gemini-2.0-flash-001',
                     contents=[LINK_PROMPT + f"\n내용: {transcript}"]
                 )
                 await bot_client.send_message(
@@ -314,7 +314,7 @@ async def on_channel_msg(event):
         text = fetch_webpage_text(urls[0])
         if text:
             res = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.0-flash-001',
                 contents=[LINK_PROMPT + f"\n내용: {text}"]
             )
             await bot_client.send_message(
@@ -344,7 +344,7 @@ async def on_channel_msg(event):
             # Gemini Files API에 PDF 업로드 → 멀티모달 분석
             uploaded = client.files.upload(file=file_path)
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.0-flash-001',
                 contents=[uploaded, PDF_PROMPT]
             )
             # 분석 완료 후 Gemini 서버에서 파일 삭제
