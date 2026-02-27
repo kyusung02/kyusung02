@@ -33,7 +33,7 @@ import logging
 import re
 import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument
 import urllib.request
@@ -204,9 +204,10 @@ async def get_finance_summary(company):
             cols.append('frmtrm_amount')
         data_str = essential[cols].to_string()
 
+        today = date.today().strftime("%Y년 %m월 %d일")
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=[FINANCE_PROMPT + f"\n\n종목: {company}\n데이터:\n{data_str}"]
+            contents=[FINANCE_PROMPT + f"\n\n작성일: {today}\n종목: {company}\n데이터:\n{data_str}"]
         )
         source_note = f"\n\n📌 출처: DART 전자공시시스템 ({year}년 재무제표)"
         return response.text + source_note
