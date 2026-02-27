@@ -281,6 +281,9 @@ async def on_channel_msg(event):
         [기사/블로그] 일반 URL 감지 → 웹 크롤링 → Gemini 요약 → 원문 링크 첨부
         [PDF] 문서 첨부 감지 → 파일 다운로드 → Gemini Files API 업로드 → 리포트 분석 → 파일 삭제
     """
+    chat = await event.get_chat()
+    source_name = chat.title if hasattr(chat, 'title') else "정보 채널"
+
     urls = re.findall(r'https?://[^\s]+', event.text or "")
 
     # ── 유튜브 ──────────────────────────────────────────
@@ -297,12 +300,12 @@ async def on_channel_msg(event):
                 )
                 await bot_client.send_message(
                     MY_TELEGRAM_ID,
-                    f"▶️ **[유튜브 인사이트 요약]**\n{res.text}\n\n📎 원문: {yt_url}"
+                    f"▶️ **[유튜브 인사이트 요약]**\n📡 채널: {source_name}\n\n{res.text}\n\n📎 원문: {yt_url}"
                 )
             except Exception as e:
                 await bot_client.send_message(
                     MY_TELEGRAM_ID,
-                    f"▶️ **[유튜브]** 자막을 가져올 수 없습니다 ({e})\n📎 원문: {yt_url}"
+                    f"▶️ **[유튜브]** 자막을 가져올 수 없습니다 ({e})\n📡 채널: {source_name}\n📎 원문: {yt_url}"
                 )
         return
 
@@ -316,7 +319,7 @@ async def on_channel_msg(event):
             )
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"🌐 **[네모 봇 인사이트 요약]**\n{res.text}\n\n📎 원문: {urls[0]}"
+                f"🌐 **[네모 봇 인사이트 요약]**\n📡 채널: {source_name}\n\n{res.text}\n\n📎 원문: {urls[0]}"
             )
         return
 
@@ -335,7 +338,7 @@ async def on_channel_msg(event):
 
         await bot_client.send_message(
             MY_TELEGRAM_ID,
-            f"📄 **[PDF 분석 중...]**\n{caption}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
+            f"📄 **[PDF 분석 중...]**\n📡 채널: {source_name}\n{caption}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
         )
         try:
             # Gemini Files API에 PDF 업로드 → 멀티모달 분석
@@ -348,12 +351,12 @@ async def on_channel_msg(event):
             client.files.delete(name=uploaded.name)
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📊 **[PDF 리포트 분석]**\n_{caption}_\n\n{response.text}\n\n📎 출처: {filename}"
+                f"📊 **[PDF 리포트 분석]**\n📡 채널: {source_name}\n_{caption}_\n\n{response.text}\n\n📎 파일명: {filename}"
             )
         except Exception as e:
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📄 **[PDF 수신]**\n{caption}\n\n⚠️ 분석 중 오류 발생: {e}\n📎 출처: {filename}"
+                f"📄 **[PDF 수신]**\n📡 채널: {source_name}\n{caption}\n\n⚠️ 분석 중 오류 발생: {e}\n📎 파일명: {filename}"
             )
 
 
