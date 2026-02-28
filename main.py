@@ -525,6 +525,122 @@ def _draw_chart_us(ticker_raw: str, path_daily: str, path_weekly: str):
         plt.savefig(path, dpi=100, bbox_inches='tight')
         plt.close()
 
+
+def _draw_chart_financials(ticker_sym: str, company: str, path: str):
+    """
+    yfinance 분기 실적 데이터로 TTM/분기 실적 차트를 생성합니다. (동기 함수 - executor에서 실행)
+
+    Args:
+        ticker_sym (str): yfinance ticker (예: '005930.KS', 'AAPL')
+        company    (str): 차트 제목에 표시할 종목명
+        path       (str): 저장할 PNG 파일 경로
+
+    차트 구성:
+        - 3행 subplot: 매출(Revenue) / 영업이익(Operating Income) / 순이익(Net Income)
+        - 가로축: 최근 8분기 레이블 (YYYYQQ 형식)
+        - 각 막대에 TTM(최근 4분기 합계) 수평 점선 표시
+        - 단위: 조원(KRW) 또는 B USD 자동 판별
+    """
+    try:
+        stock = yf.Ticker(ticker_sym)
+        df = stock.quarterly_income_stmt  # columns = DatetimeIndex, rows = 계정명
+        if df is None or df.empty:
+            return
+
+        # 최근 8분기 역순 정렬 (오래된 → 최신)
+        df = df.sort_index(axis=1)
+        df = df.iloc[:, -8:]
+
+        # 계정명 후보 (yfinance 버전마다 다를 수 있음)
+        def _find_row(candidates):
+            for name in candidates:
+                if name in df.index:
+                    return df.loc[name]
+            return None
+
+        rev  = _find_row(['Total Revenue', 'Revenue'])
+        oi   = _find_row(['Operating Income', 'EBIT', 'Operating Income Loss'])
+        ni   = _find_row(['Net Income', 'Net Income Common Stockholders'])
+
+        if rev is None:
+            return  # 핵심 데이터 없으면 차트 생략
+
+        # 단위 결정: KRW 종목은 조원, USD는 10억$
+        is_krw = ticker_sym.endswith('.KS') or ticker_sym.endswith('.KQ')
+        if is_krw:
+            unit  = 1e12       # 조원
+            ulabel = '조원'
+        else:
+            unit  = 1e9        # B USD
+            ulabel = 'B $'
+
+        # 분기 레이블 (YYYYQQ)
+        def _quarter_label(dt):
+            q = (dt.month - 1) // 3 + 1
+            return f"{dt.year}Q{q}"
+
+        labels = [_quarter_label(c) for c in df.columns]
+
+        # TTM = 최근 4분기 합산
+        def _ttm(series):
+            if series is None:
+                return None
+            vals = pd.to_numeric(series, errors='coerce').dropna()
+            return vals.iloc[-4:].sum() / unit if len(vals) >= 4 else None
+
+        ttm_rev = _ttm(rev)
+        ttm_oi  = _ttm(oi)
+        ttm_ni  = _ttm(ni)
+
+        rows_to_plot = [(rev, ttm_rev, '매출액', '#4C72B0'),
+                        (oi,  ttm_oi,  '영업이익', '#55A868'),
+                        (ni,  ttm_ni,  '순이익',   '#C44E52')]
+        rows_to_plot = [(s, t, n, c) for s, t, n, c in rows_to_plot if s is not None]
+
+        n_rows = len(rows_to_plot)
+        fig, axes = plt.subplots(n_rows, 1, figsize=(10, 3.2 * n_rows),
+                                 gridspec_kw={'hspace': 0.55})
+        if n_rows == 1:
+            axes = [axes]
+
+        fig.suptitle(f'{company}  분기 실적 (TTM 기준)', fontsize=13, fontweight='bold')
+
+        for ax, (series, ttm_val, name, color) in zip(axes, rows_to_plot):
+            vals = pd.to_numeric(series, errors='coerce').fillna(0) / unit
+            bar_colors = [color if v >= 0 else '#d62728' for v in vals]
+            bars = ax.bar(range(len(labels)), vals, color=bar_colors, alpha=0.85, width=0.6)
+
+            # 막대 값 레이블
+            for bar, v in zip(bars, vals):
+                if v == 0:
+                    continue
+                ypos = bar.get_height() if v >= 0 else bar.get_height()
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        ypos + (abs(vals.max() - vals.min()) * 0.02),
+                        f'{v:.1f}', ha='center', va='bottom', fontsize=7.5)
+
+            # TTM 수평 점선
+            if ttm_val is not None:
+                ax.axhline(ttm_val, color='orange', linewidth=1.5,
+                           linestyle='--', label=f'TTM: {ttm_val:.1f}{ulabel}')
+                ax.legend(fontsize=8, loc='upper left')
+
+            ax.set_title(f'{name} ({ulabel})', fontsize=10)
+            ax.set_xticks(range(len(labels)))
+            ax.set_xticklabels(labels, fontsize=8, rotation=30)
+            ax.grid(axis='y', alpha=0.3)
+            ax.axhline(0, color='black', linewidth=0.8)
+
+        plt.savefig(path, dpi=100, bbox_inches='tight')
+        plt.close()
+    except Exception as e:
+        log.warning("_draw_chart_financials failed for %s: %s", ticker_sym, e)
+        try:
+            plt.close()
+        except Exception:
+            pass
+
+
 # ==========================================
 # 3. 재무 분석 함수
 # ==========================================
@@ -930,10 +1046,12 @@ async def on_bot_msg(event):
         # 차트 생성
         charts = []
         if ticker:
-            path_d = os.path.join(CHARTS_DIR, f"{comp}_daily.png")
-            path_w = os.path.join(CHARTS_DIR, f"{comp}_weekly.png")
+            path_d  = os.path.join(CHARTS_DIR, f"{comp}_daily.png")
+            path_w  = os.path.join(CHARTS_DIR, f"{comp}_weekly.png")
+            path_fin = os.path.join(CHARTS_DIR, f"{comp}_financials.png")
             await loop.run_in_executor(_executor, _draw_chart_kr, ticker, comp, path_d, path_w)
-            charts = [p for p in [path_d, path_w] if os.path.exists(p)]
+            await loop.run_in_executor(_executor, _draw_chart_financials, ticker, comp, path_fin)
+            charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
 
         # 텍스트 전송
         header = f"📈 **[{comp} 투자 분석 리포트]**\n\n"
@@ -962,22 +1080,26 @@ async def on_bot_msg(event):
         await event.reply(f"🇺🇸 **{query}** 미국 종목 조회 중...")
         loop = asyncio.get_event_loop()
 
-        # 리포트 텍스트 + 차트 병렬 생성
+        # 리포트 텍스트 + 주가 차트 병렬 생성
         ticker = US_STOCK_MAP.get(query.lower(), US_STOCK_MAP.get(query, query.upper()))
         report_task = loop.run_in_executor(_executor, get_us_report_text, query)
 
-        path_d = os.path.join(CHARTS_DIR, f"US_{ticker}_daily.png")
-        path_w = os.path.join(CHARTS_DIR, f"US_{ticker}_weekly.png")
-        chart_task  = loop.run_in_executor(_executor, _draw_chart_us, query, path_d, path_w)
+        path_d   = os.path.join(CHARTS_DIR, f"US_{ticker}_daily.png")
+        path_w   = os.path.join(CHARTS_DIR, f"US_{ticker}_weekly.png")
+        path_fin = os.path.join(CHARTS_DIR, f"US_{ticker}_financials.png")
+        chart_task = loop.run_in_executor(_executor, _draw_chart_us, query, path_d, path_w)
 
         report_text = await report_task
         await chart_task
+
+        # 분기 실적 차트 (주가 차트 완료 후 순차 실행)
+        await loop.run_in_executor(_executor, _draw_chart_financials, ticker, query, path_fin)
 
         full = f"📊 **[미국 종목 리포트]**\n\n{report_text}"
         for i in range(0, len(full), 4096):
             await event.reply(full[i:i+4096])
 
-        charts = [p for p in [path_d, path_w] if os.path.exists(p)]
+        charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
         if charts:
             await bot_client.send_file(MY_TELEGRAM_ID, charts)
             for p in charts:
