@@ -24,6 +24,11 @@
    - 일봉(3개월) + 주봉(5년) 차트 이미지를 함께 전송
    - 한글 종목명(예: 엔비디아) 또는 ticker(예: NVDA) 모두 지원
 
+6. 관심종목 관리 (/watch, /unwatch, /watchlist)
+   - 텔레그램에서 실시간으로 관심종목 추가/삭제
+   - bot/data/watchlist.json에 영속 저장 (재시작 후에도 유지)
+   - dart_monitor.py에서 관심종목 대상 공시 자동 감지에 활용 예정
+
 사용 기술 스택:
   - Telethon  : 텔레그램 클라이언트 & 봇 API
   - Google Gemini (gemini-2.5-flash) : AI 요약/분석
@@ -82,10 +87,54 @@ log = logging.getLogger(__name__)
 from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN,
     MY_TELEGRAM_ID, GEMINI_API_KEY, WATCH_CHANNELS,
-    DOWNLOAD_DIR, DART_API_KEY, CHARTS_DIR,
+    DOWNLOAD_DIR, DART_API_KEY, CHARTS_DIR, DATA_DIR,
+    DART_ALERT_KEYWORDS,
 )
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# ==========================================
+# 관심종목(watchlist) 관리 — bot/data/watchlist.json
+# ==========================================
+WATCHLIST_PATH = os.path.join(DATA_DIR, "watchlist.json")
+
+
+def load_watchlist() -> list[str]:
+    """watchlist.json에서 관심종목 리스트를 읽어옵니다."""
+    if not os.path.exists(WATCHLIST_PATH):
+        return []
+    try:
+        with open(WATCHLIST_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def save_watchlist(stocks: list[str]):
+    """관심종목 리스트를 watchlist.json에 저장합니다."""
+    with open(WATCHLIST_PATH, 'w', encoding='utf-8') as f:
+        json.dump(stocks, f, ensure_ascii=False, indent=2)
+
+
+def add_to_watchlist(name: str) -> tuple[bool, str]:
+    """종목 추가. (성공여부, 메시지) 반환."""
+    stocks = load_watchlist()
+    if name in stocks:
+        return False, f"'{name}'은(는) 이미 관심종목에 있습니다."
+    stocks.append(name)
+    save_watchlist(stocks)
+    return True, f"✅ '{name}' 관심종목에 추가되었습니다. (총 {len(stocks)}종목)"
+
+
+def remove_from_watchlist(name: str) -> tuple[bool, str]:
+    """종목 삭제. (성공여부, 메시지) 반환."""
+    stocks = load_watchlist()
+    if name not in stocks:
+        return False, f"'{name}'은(는) 관심종목에 없습니다."
+    stocks.remove(name)
+    save_watchlist(stocks)
+    return True, f"🗑️ '{name}' 관심종목에서 삭제되었습니다. (총 {len(stocks)}종목)"
 
 # Gemini 및 DART 클라이언트 초기화
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -660,6 +709,10 @@ async def on_bot_msg(event):
         /재무 <종목명>  → DART 재무 분석 리포트 + 실시간 주가 + 차트
         /공시 <종목명>  → 최근 주요 공시 3건 링크
         /us <종목명>    → 미국 종목 실시간 주가·밸류에이션 + 차트 (한글명/ticker 모두 가능)
+        /watch <종목명> → DART 공시 관심종목 추가
+        /unwatch <종목명> → 관심종목 삭제
+        /watchlist      → 관심종목 목록 조회
+        /keywords       → DART 공시 알림 키워드 목록 확인
         /장보기         → 주간 장보기 리스트 즉시 요청
         /나들이         → 나들이 장소 즉시 요청
     """
@@ -753,6 +806,38 @@ async def on_bot_msg(event):
             msg += f"▪️ {row['rcept_dt']} | [{row['report_nm']}](https://dart.fss.or.kr/dsaf001/main.do?rcpNo={row['rcept_no']})\n"
         await event.reply(msg, link_preview=False)
 
+    # ── 관심종목 관리 ──────────────────────────────────────
+    elif text.startswith('/watch ') and not text.startswith('/watchlist'):
+        name = text[7:].strip()
+        if not name:
+            return await event.reply("사용법: /watch 종목명")
+        ok, msg = add_to_watchlist(name)
+        await event.reply(msg)
+
+    elif text.startswith('/unwatch'):
+        name = text.replace('/unwatch', '').strip()
+        if not name:
+            return await event.reply("사용법: /unwatch 종목명")
+        ok, msg = remove_from_watchlist(name)
+        await event.reply(msg)
+
+    elif text == '/watchlist':
+        stocks = load_watchlist()
+        if not stocks:
+            return await event.reply("📋 관심종목이 비어 있습니다.\n\n/watch 삼성전자  →  추가")
+        msg = f"📋 **관심종목 ({len(stocks)}종목)**\n\n"
+        for i, s in enumerate(stocks, 1):
+            msg += f"{i}. {s}\n"
+        msg += "\n/watch 종목명  →  추가\n/unwatch 종목명  →  삭제"
+        await event.reply(msg)
+
+    elif text == '/keywords':
+        msg = "🔑 **DART 공시 알림 키워드**\n\n"
+        for kw in DART_ALERT_KEYWORDS:
+            msg += f"• {kw}\n"
+        msg += f"\n총 {len(DART_ALERT_KEYWORDS)}개 키워드"
+        await event.reply(msg)
+
 # ==========================================
 # 6. 메인 가동 루틴
 # ==========================================
@@ -779,7 +864,15 @@ async def main():
     scheduler.start()
 
     # 봇 가동 완료 알림 + 사용 가능한 명령어 안내
-    await bot_client.send_message(MY_TELEGRAM_ID, "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n🔹 국내: /재무 삼성전자, /공시 삼성전자\n🔹 미국: /us NVDA, /us 엔비디아\n🔹 생활: /장보기, /나들이\n🔹 자동: 외부 채널 링크 자동 요약 가동 중")
+    await bot_client.send_message(MY_TELEGRAM_ID,
+        "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n"
+        "🔹 국내: /재무 삼성전자, /공시 삼성전자\n"
+        "🔹 미국: /us NVDA, /us 엔비디아\n"
+        "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
+        "🔹 키워드: /keywords (DART 공시 알림 키워드 확인)\n"
+        "🔹 생활: /장보기, /나들이\n"
+        "🔹 자동: 외부 채널 링크 자동 요약 가동 중"
+    )
 
     # 두 클라이언트를 동시에 실행하여 채널 수신과 봇 명령 처리를 병행
     # ⚠️ [이벤트 루프 블로킹 주의]
