@@ -15,7 +15,11 @@
 3. DART 공시 조회 (/공시 <종목명>)
    - 해당 종목의 최근 주요 공시 3건을 링크와 함께 제공
 
-4. 주간 생활 브리핑 (자동 스케줄)
+4. 모닝 시황 브리핑 (자동 스케줄 + /시황 수동 호출)
+   - 매일 07:00 → 미국 3대 지수(S&P/NASDAQ/DOW) + KOSPI/KOSDAQ
+   - 원자재(금/WTI), 금리(미국 2Y/10Y), VIX, BTC → Gemini 시황 요약
+
+4-1. 주간 생활 브리핑 (자동 스케줄)
    - 금요일 09:00 → /장보기 : 저당/건강 주말 식단 + 장보기 리스트
    - 목요일 18:00 → /나들이 : 41개월 아이와 가기 좋은 서울/경기 나들이 추천
 
@@ -626,6 +630,106 @@ async def send_weekly_info(mode):
     response = client.models.generate_content(model='gemini-2.5-flash', contents=[prompt])
     await bot_client.send_message(MY_TELEGRAM_ID, response.text)
 
+
+def _fetch_us_morning_data() -> str:
+    """
+    미국 시황 데이터를 yfinance로 수집해 텍스트로 반환합니다. (동기 함수 - executor에서 실행)
+
+    수집 항목:
+        - 3대 지수: S&P 500, NASDAQ, DOW
+        - 국내: KOSPI, KOSDAQ
+        - 원자재: 금(GC=F), WTI(CL=F)
+        - 금리: 미국 2Y(^IRX), 10Y(^TNX)
+        - 변동성: VIX(^VIX)
+        - 가상자산: BTC-USD
+    """
+    TICKERS = {
+        'S&P 500':  '^GSPC',
+        'NASDAQ':   '^IXIC',
+        'DOW':      '^DJI',
+        'KOSPI':    '^KS11',
+        'KOSDAQ':   '^KQ11',
+        '금(Gold)': 'GC=F',
+        'WTI':      'CL=F',
+        '미국 2Y':  '^IRX',
+        '미국 10Y': '^TNX',
+        'VIX':      '^VIX',
+        'BTC':      'BTC-USD',
+    }
+
+    lines = []
+    for name, sym in TICKERS.items():
+        try:
+            hist = yf.Ticker(sym).history(period='2d')
+            if hist.empty or len(hist) < 1:
+                lines.append(f"{name}: 데이터 없음")
+                continue
+            cur  = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[-2] if len(hist) >= 2 else cur
+            chg  = cur - prev
+            pct  = chg / prev * 100 if prev else 0
+            arrow = '▲' if chg >= 0 else '▼'
+            sign  = '+' if chg >= 0 else ''
+
+            # 금리/VIX는 소수점 2자리, 가격은 콤마 포맷
+            if sym in ('^IRX', '^TNX', '^VIX'):
+                lines.append(f"{name}: {cur:.2f}  {arrow} {sign}{pct:.1f}%")
+            elif sym == 'BTC-USD':
+                lines.append(f"{name}: ${cur:,.0f}  {arrow} {sign}{pct:.1f}%")
+            elif sym in ('GC=F', 'CL=F'):
+                lines.append(f"{name}: ${cur:,.1f}  {arrow} {sign}{pct:.1f}%")
+            elif sym in ('^KS11', '^KQ11'):
+                lines.append(f"{name}: {cur:,.2f}  {arrow} {sign}{pct:.1f}%")
+            else:
+                lines.append(f"{name}: {cur:,.2f}  {arrow} {sign}{pct:.1f}%")
+        except Exception as e:
+            lines.append(f"{name}: 조회 실패 ({e})")
+
+    return '\n'.join(lines)
+
+
+async def send_us_morning():
+    """
+    매일 07:00 KST 자동 실행되는 미국 시황 브리핑 함수입니다.
+
+    동작 흐름:
+        1) yfinance로 주요 지수/원자재/금리/BTC 전일 종가 수집
+        2) 수집 데이터를 Gemini에 전달해 시황 요약 생성
+        3) 텔레그램으로 전송
+    """
+    loop = asyncio.get_event_loop()
+    data_str = await loop.run_in_executor(_executor, _fetch_us_morning_data)
+
+    today = date.today().strftime('%Y년 %m월 %d일')
+    prompt = (
+        f"당신은 CFA 자격을 보유한 국내 대형 증권사 리서치센터 수석 애널리스트입니다.\n"
+        f"아래는 {today} 기준 글로벌 시장 주요 지표입니다.\n\n"
+        f"{data_str}\n\n"
+        f"아래 형식으로 간결하게 정리하세요.\n\n"
+        f"[🌅 모닝 시황 브리핑 - {today}]\n\n"
+        f"■ 미국 3대 지수 흐름\n"
+        f"- S&P500 / NASDAQ / DOW 등락 요약 및 전일 대비 의미\n\n"
+        f"■ 국내 시장 전망\n"
+        f"- KOSPI / KOSDAQ 오늘 시가 방향 예상 (미국 흐름 반영)\n\n"
+        f"■ 원자재 & 금리\n"
+        f"- 금, WTI, 미국 2Y/10Y 금리 동향 및 투자 시사점\n\n"
+        f"■ 리스크 & 기회\n"
+        f"- 오늘 주목할 매크로 변수 또는 이벤트 1~2가지\n\n"
+        f"3줄 이내로 각 섹션을 간결하게 서술하세요."
+    )
+
+    response = await loop.run_in_executor(
+        _executor,
+        lambda: client.models.generate_content(model='gemini-2.5-flash', contents=[prompt])
+    )
+
+    raw_data_block = f"\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
+    await bot_client.send_message(
+        MY_TELEGRAM_ID,
+        response.text + raw_data_block
+    )
+
+
 # ==========================================
 # 5. 이벤트 핸들러
 # ==========================================
@@ -796,6 +900,7 @@ async def on_bot_msg(event):
         /unwatch <종목명> → 관심종목 삭제
         /watchlist      → 관심종목 목록 조회
         /keywords       → DART 공시 알림 키워드 목록 확인
+        /시황           → 미국 시황 브리핑 즉시 요청 (매일 07:00 자동 발송)
         /장보기         → 주간 장보기 리스트 즉시 요청
         /나들이         → 나들이 장소 즉시 요청
         /help (/도움말) → 전체 명령어 도움말 출력
@@ -805,7 +910,11 @@ async def on_bot_msg(event):
         return
     text = event.text
 
-    if text.startswith('/재무'):
+    if text == '/시황':
+        await event.reply("🌅 미국 시황 데이터 수집 중...")
+        await send_us_morning()
+
+    elif text.startswith('/재무'):
         comp = text.replace('/재무', '').strip()
         await event.reply(f"📊 **{comp}** 분석 중... (주가 조회 + DART 재무 + 차트 생성)")
         loop = asyncio.get_event_loop()
@@ -937,6 +1046,9 @@ async def on_bot_msg(event):
             "  `/watchlist` — 관심종목 전체 목록\n"
             "  `/keywords` — DART 공시 알림 키워드 확인\n"
             "    ※ 평일 09:00~18:00 매 30분 자동 감지\n\n"
+            "📈 **시황 브리핑**\n"
+            "  `/시황` — 미국 3대 지수·원자재·금리·BTC 시황 즉시 조회\n"
+            "    ※ 매일 07:00 자동 발송\n\n"
             "🏠 **생활 브리핑**\n"
             "  `/장보기` — 주간 건강 식단 + 장보기 리스트\n"
             "  `/나들이` — 아이와 가기 좋은 나들이 장소 추천\n"
@@ -968,10 +1080,12 @@ async def main():
     await user_client.start()
     await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
 
-    # 스케줄러 설정 (목/금 정기 브리핑 + 관심종목 DART 공시 감지)
+    # 스케줄러 설정 (목/금 정기 브리핑 + 모닝 시황 + 관심종목 DART 공시 감지)
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9, args=['shop'])
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, args=['out'])
+    # 매일 07:00 미국 시황 브리핑 (주말 포함 — 미국 선물/BTC는 주말도 움직임)
+    scheduler.add_job(send_us_morning, 'cron', hour=7, minute=0)
     # 관심종목 DART 공시 30분마다 감지 (장 시간대 집중: 평일 09:00~18:00)
     scheduler.add_job(
         check_dart_watchlist,
@@ -989,6 +1103,7 @@ async def main():
         "🔹 미국: /us NVDA, /us 엔비디아\n"
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
         "🔹 키워드: /keywords (DART 공시 알림 키워드 확인)\n"
+        "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
         "🔹 생활: /장보기, /나들이\n"
         "🔹 자동: 외부 채널 링크 자동 요약 가동 중\n\n"
         "📖 전체 명령어 보기: /help"
