@@ -45,6 +45,9 @@
   - Matplotlib : 주가 차트 이미지 생성
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 import os
 import logging
