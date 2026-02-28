@@ -74,3 +74,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # PDF 등 첨부파일 임시 저장 경로 (Gemini 분석 후 자동 삭제)
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", os.path.join(BASE_DIR, "downloads"))
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# 주가 차트 이미지 저장 경로 (/재무, /us 명령어 차트 생성 시 사용)
+CHARTS_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHARTS_DIR, exist_ok=True)
