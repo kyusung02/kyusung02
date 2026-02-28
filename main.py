@@ -57,6 +57,12 @@ import matplotlib.dates as mdates
 from concurrent.futures import ThreadPoolExecutor
 
 _executor = ThreadPoolExecutor(max_workers=2)
+# ⚠️ [성능 주의] Gemini SDK의 client.models.generate_content()는 동기(blocking) 함수입니다.
+# async 함수 내에서 직접 호출하면 asyncio 이벤트 루프 스레드를 점유해 CPU 사용률이 급증합니다.
+# 올바른 처리 방법:
+#   loop.run_in_executor(_executor, client.models.generate_content, model, contents)
+# 아래 핸들러들(on_channel_msg, on_bot_msg)의 Gemini 호출은 현재 동기 방식으로 실행됩니다.
+# CPU 부하가 높을 경우 run_in_executor 로 감싸는 리팩터링을 권장합니다.
 
 # ==========================================
 # 1. 로깅 및 기본 설정
@@ -573,6 +579,8 @@ async def on_channel_msg(event):
             try:
                 segments = YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
                 transcript = ' '.join(s['text'] for s in segments)[:5000]
+                # NOTE: generate_content()는 동기 호출 → 이벤트 루프 블로킹 발생 가능
+                # 고부하 환경에서는 run_in_executor 로 오프로드 권장
                 res = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[LINK_PROMPT + f"\n내용: {transcript}"]
@@ -589,6 +597,9 @@ async def on_channel_msg(event):
         return
 
     # ── 기사 / 블로그 ────────────────────────────────────
+    # NOTE: fetch_webpage_text()는 동기 urllib 호출 (네트워크 블로킹)
+    # NOTE: generate_content()도 동기 호출 → 두 번 연속으로 이벤트 루프를 블로킹합니다.
+    # 채널 메시지가 빈번할 경우 CPU/응답 지연의 주원인이 됩니다.
     if urls:
         text = fetch_webpage_text(urls[0])
         if text:
@@ -771,6 +782,11 @@ async def main():
     await bot_client.send_message(MY_TELEGRAM_ID, "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n🔹 국내: /재무 삼성전자, /공시 삼성전자\n🔹 미국: /us NVDA, /us 엔비디아\n🔹 생활: /장보기, /나들이\n🔹 자동: 외부 채널 링크 자동 요약 가동 중")
 
     # 두 클라이언트를 동시에 실행하여 채널 수신과 봇 명령 처리를 병행
+    # ⚠️ [이벤트 루프 블로킹 주의]
+    # on_channel_msg / on_bot_msg 핸들러 내 Gemini API 호출은 동기 함수입니다.
+    # 해당 호출이 진행되는 동안 asyncio 이벤트 루프가 멈추며 CPU 사용률이 급등합니다.
+    # 증상: ps aux 에서 main.py 프로세스가 ~100% CPU 점유
+    # 해결: loop.run_in_executor(_executor, lambda: client.models.generate_content(...)) 로 변경
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
 
 if __name__ == "__main__":
