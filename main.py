@@ -24,10 +24,12 @@
    - 일봉(3개월) + 주봉(5년) 차트 이미지를 함께 전송
    - 한글 종목명(예: 엔비디아) 또는 ticker(예: NVDA) 모두 지원
 
-6. 관심종목 관리 (/watch, /unwatch, /watchlist)
+6. 관심종목 관리 + DART 공시 자동 감지 (/watch, /unwatch, /watchlist)
    - 텔레그램에서 실시간으로 관심종목 추가/삭제
    - bot/data/watchlist.json에 영속 저장 (재시작 후에도 유지)
-   - dart_monitor.py에서 관심종목 대상 공시 자동 감지에 활용 예정
+   - 평일 09:00~18:00 매 30분마다 DART 신규 공시 자동 감지 및 알림
+   - 중요 키워드(DART_ALERT_KEYWORDS) 포함 시 🚨, 일반 공시는 📢 구분 전송
+   - bot/data/seen_filings.json으로 중복 알림 방지
 
 사용 기술 스택:
   - Telethon  : 텔레그램 클라이언트 & 봇 API
@@ -135,6 +137,35 @@ def remove_from_watchlist(name: str) -> tuple[bool, str]:
     stocks.remove(name)
     save_watchlist(stocks)
     return True, f"🗑️ '{name}' 관심종목에서 삭제되었습니다. (총 {len(stocks)}종목)"
+
+
+# ==========================================
+# 관심종목 공시 감지 — 중복 방지용 수신 이력 관리
+# ==========================================
+SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
+_MAX_SEEN = 1000  # 이력 상한선 (오래된 항목 자동 정리)
+
+
+def load_seen_filings() -> set:
+    """이미 알림을 보낸 공시 접수번호(rcept_no) 집합을 불러옵니다."""
+    if not os.path.exists(SEEN_FILINGS_PATH):
+        return set()
+    try:
+        with open(SEEN_FILINGS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return set(data) if isinstance(data, list) else set()
+    except (json.JSONDecodeError, IOError):
+        return set()
+
+
+def save_seen_filings(seen: set):
+    """수신 이력을 seen_filings.json에 저장합니다. 상한선 초과 시 오래된 항목 제거."""
+    items = list(seen)
+    if len(items) > _MAX_SEEN:
+        items = items[-_MAX_SEEN:]
+    with open(SEEN_FILINGS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(items, f)
+
 
 # Gemini 및 DART 클라이언트 초기화
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -605,6 +636,58 @@ def extract_youtube_id(url):
     return match.group(1) if match else None
 
 
+# ==========================================
+# 5-1. 관심종목 DART 공시 자동 감지 (스케줄 작업)
+# ==========================================
+async def check_dart_watchlist():
+    """
+    관심종목(watchlist.json)의 DART 공시를 주기적으로 확인합니다.
+
+    동작 흐름:
+        1) watchlist.json에서 관심종목 목록을 로드
+        2) 오늘 날짜 기준으로 각 종목의 최신 공시를 DART API로 조회
+        3) 이미 알림을 보낸 공시(seen_filings.json)는 건너뜀
+        4) 새 공시 발견 시:
+           - DART_ALERT_KEYWORDS 포함 여부에 따라 🚨(중요) / 📢(일반) 구분
+           - 공시 링크와 함께 텔레그램으로 알림 전송
+        5) 수신 이력 업데이트
+    """
+    stocks = load_watchlist()
+    if not stocks:
+        return
+
+    seen = load_seen_filings()
+    today = date.today().strftime('%Y-%m-%d')
+    loop = asyncio.get_event_loop()
+    new_seen = set(seen)
+
+    for comp in stocks:
+        try:
+            reports = await loop.run_in_executor(_executor, dart.list, comp, today)
+            if reports is None or reports.empty:
+                continue
+            for _, row in reports.iterrows():
+                rcpNo = str(row['rcept_no'])
+                if rcpNo in seen:
+                    continue
+                report_nm = str(row['report_nm'])
+                is_alert = any(kw in report_nm for kw in DART_ALERT_KEYWORDS)
+                flag = "🚨" if is_alert else "📢"
+                link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcpNo}"
+                await bot_client.send_message(
+                    MY_TELEGRAM_ID,
+                    f"{flag} **[관심종목 공시]** {comp}\n"
+                    f"▪️ {row['rcept_dt']} | [{report_nm}]({link})",
+                    link_preview=False,
+                )
+                new_seen.add(rcpNo)
+        except Exception as e:
+            log.warning("DART watchlist check failed for %s: %s", comp, e)
+
+    if new_seen != seen:
+        save_seen_filings(new_seen)
+
+
 @user_client.on(events.NewMessage(chats=WATCH_CHANNELS))
 async def on_channel_msg(event):
     """
@@ -857,10 +940,18 @@ async def main():
     await user_client.start()
     await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
 
-    # 스케줄러 설정 (목/금 정기 브리핑)
+    # 스케줄러 설정 (목/금 정기 브리핑 + 관심종목 DART 공시 감지)
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9, args=['shop'])
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, args=['out'])
+    # 관심종목 DART 공시 30분마다 감지 (장 시간대 집중: 평일 09:00~18:00)
+    scheduler.add_job(
+        check_dart_watchlist,
+        'cron',
+        day_of_week='mon-fri',
+        hour='9-18',
+        minute='*/30',
+    )
     scheduler.start()
 
     # 봇 가동 완료 알림 + 사용 가능한 명령어 안내
