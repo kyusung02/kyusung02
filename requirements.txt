@@ -4,3 +4,5 @@ apscheduler
 pandas
 opendartreader
 youtube-transcript-api
+yfinance
+matplotlib

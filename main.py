@@ -42,6 +42,14 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import OpenDartReader
+import yfinance as yf
+import matplotlib
+matplotlib.use('Agg')  # 화면 없는 서버 환경용 백엔드
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from concurrent.futures import ThreadPoolExecutor
+
+_executor = ThreadPoolExecutor(max_workers=2)
 
 # ==========================================
 # 1. 로깅 및 기본 설정
@@ -61,7 +69,7 @@ log = logging.getLogger(__name__)
 from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN,
     MY_TELEGRAM_ID, GEMINI_API_KEY, WATCH_CHANNELS,
-    DOWNLOAD_DIR, DART_API_KEY,
+    DOWNLOAD_DIR, DART_API_KEY, CHARTS_DIR,
 )
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -156,6 +164,269 @@ SHOPPING_PROMPT = "41개월 여아가 있는 3인 가족을 위한 주말 저당
 
 # 주간 나들이: 아이와 함께할 수 있는 서울/경기 나들이 장소 추천
 OUTING_PROMPT = "41개월 아이와 가기 좋은 서울/경기 나들이 장소를 추천하세요."
+
+# ==========================================
+# US 종목명(한글/영문) → ticker 매핑
+# ==========================================
+US_STOCK_MAP = {
+    # 반도체
+    '엔비디아': 'NVDA', 'nvidia': 'NVDA',
+    'AMD': 'AMD', 'amd': 'AMD',
+    '인텔': 'INTC', 'intel': 'INTC',
+    '퀄컴': 'QCOM', 'qualcomm': 'QCOM',
+    '마이크론': 'MU', 'micron': 'MU',
+    'TSMC': 'TSM', '대만반도체': 'TSM',
+    '브로드컴': 'AVGO', 'broadcom': 'AVGO',
+    'ARM': 'ARM', 'arm': 'ARM',
+    # 빅테크
+    '애플': 'AAPL', 'apple': 'AAPL',
+    '마이크로소프트': 'MSFT', 'microsoft': 'MSFT',
+    '구글': 'GOOGL', '알파벳': 'GOOGL', 'alphabet': 'GOOGL', 'google': 'GOOGL',
+    '아마존': 'AMZN', 'amazon': 'AMZN',
+    '메타': 'META', 'meta': 'META',
+    '넷플릭스': 'NFLX', 'netflix': 'NFLX',
+    # EV/전기차
+    '테슬라': 'TSLA', 'tesla': 'TSLA',
+    # 금융
+    '버크셔': 'BRK-B', 'berkshire': 'BRK-B',
+    '비자': 'V', 'visa': 'V',
+    '마스터카드': 'MA', 'mastercard': 'MA',
+    'JP모건': 'JPM', 'jpmorgan': 'JPM',
+    # AI/소프트웨어
+    '팔란티어': 'PLTR', 'palantir': 'PLTR',
+    '스노우플레이크': 'SNOW', 'snowflake': 'SNOW',
+    '세일즈포스': 'CRM', 'salesforce': 'CRM',
+    # 기타
+    '코인베이스': 'COIN', 'coinbase': 'COIN',
+    '코카콜라': 'KO', 'cocacola': 'KO',
+    '존슨앤존슨': 'JNJ',
+    'ASML': 'ASML', 'asml': 'ASML',
+}
+
+# ==========================================
+# 주가 / 차트 유틸리티 함수
+# ==========================================
+
+def get_kr_ticker(company: str):
+    """DART find_corp으로 종목명 → yfinance ticker (예: 005930.KS) 변환"""
+    try:
+        result = dart.find_corp(company)
+        if result is None or result.empty:
+            return None
+        # KOSPI(Y) / KOSDAQ(K) 상장사 우선 선택
+        listed = result[result['corp_cls'].isin(['Y', 'K'])]
+        row = listed.iloc[0] if not listed.empty else result.iloc[0]
+        stock_code = str(row.get('stock_code', '')).strip()
+        if not stock_code or stock_code == 'nan':
+            return None
+        suffix = '.KS' if row.get('corp_cls') == 'Y' else '.KQ'
+        return stock_code + suffix
+    except Exception:
+        return None
+
+
+def get_price_info_kr(ticker: str, company: str) -> str:
+    """yfinance로 국내 주가 정보 텍스트 생성 (동기 함수 - executor에서 실행)"""
+    try:
+        hist = yf.Ticker(ticker).history(period='1y')
+        if hist.empty:
+            return ''
+        cur   = hist['Close'].iloc[-1]
+        prev  = hist['Close'].iloc[-2] if len(hist) > 1 else cur
+        chg   = cur - prev
+        chg_p = chg / prev * 100
+
+        w_chg = (cur - hist['Close'].iloc[-5])  / hist['Close'].iloc[-5]  * 100 if len(hist) >= 5  else 0.0
+        m_chg = (cur - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20] * 100 if len(hist) >= 20 else 0.0
+        ytd   = (cur - hist['Close'].iloc[0])   / hist['Close'].iloc[0]   * 100
+
+        hi52 = hist['High'].max()
+        lo52 = hist['Low'].min()
+        arrow = '▲' if chg >= 0 else '▼'
+        sign  = '+' if chg >= 0 else ''
+        return (
+            f"💰 **실시간 주가**\n"
+            f"현재가: {cur:,.0f}원  {arrow} {sign}{chg:,.0f} ({sign}{chg_p:.1f}%)\n"
+            f"금주: {w_chg:+.1f}%  |  금월: {m_chg:+.1f}%  |  YTD: {ytd:+.1f}%\n"
+            f"52주 고: {hi52:,.0f}원  |  저: {lo52:,.0f}원"
+        )
+    except Exception as e:
+        return f'(주가 조회 실패: {e})'
+
+
+def _draw_chart_kr(ticker: str, company: str, path_daily: str, path_weekly: str):
+    """일봉(3개월) + 주봉(5년) 차트 파일 저장 (동기 함수 - executor에서 실행)"""
+    stock = yf.Ticker(ticker)
+
+    # ── 일봉 3개월 ───────────────────────────────────────────
+    df_d = stock.history(period='3mo')
+    if not df_d.empty:
+        df_d['MA5']  = df_d['Close'].rolling(5).mean()
+        df_d['MA20'] = df_d['Close'].rolling(20).mean()
+        df_d['MA60'] = df_d['Close'].rolling(60).mean()
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
+                                        gridspec_kw={'height_ratios': [3, 1]})
+        fig.suptitle(f'{company} Daily Chart (3M)', fontsize=13)
+        ax1.plot(df_d.index, df_d['Close'], linewidth=1.5, color='#1f77b4', label='Close')
+        ax1.plot(df_d.index, df_d['MA5'],  linewidth=1, color='orange', alpha=0.9, label='MA5')
+        ax1.plot(df_d.index, df_d['MA20'], linewidth=1, color='green',  alpha=0.9, label='MA20')
+        ax1.plot(df_d.index, df_d['MA60'], linewidth=1, color='red',    alpha=0.9, label='MA60')
+        ax1.legend(loc='upper left', fontsize=8)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+        ax1.set_ylabel('Price (KRW)')
+        ax1.grid(True, alpha=0.3)
+
+        colors = ['#d32f2f' if c >= o else '#1976d2'
+                  for c, o in zip(df_d['Close'], df_d['Open'])]
+        ax2.bar(df_d.index, df_d['Volume'], color=colors, alpha=0.7)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+        ax2.set_ylabel('Volume')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(path_daily, dpi=100, bbox_inches='tight')
+        plt.close()
+
+    # ── 주봉 5년 ─────────────────────────────────────────────
+    df_w = stock.history(period='5y', interval='1wk')
+    if not df_w.empty:
+        df_w['MA5']   = df_w['Close'].rolling(5).mean()
+        df_w['MA20']  = df_w['Close'].rolling(20).mean()
+        df_w['MA200'] = df_w['Close'].rolling(200).mean()
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
+                                        gridspec_kw={'height_ratios': [3, 1]})
+        fig.suptitle(f'{company} Weekly Chart (5Y)', fontsize=13)
+        ax1.plot(df_w.index, df_w['Close'], linewidth=1.5, color='#1f77b4', label='Close')
+        ax1.plot(df_w.index, df_w['MA5'],   linewidth=1, color='orange', alpha=0.9, label='MA5')
+        ax1.plot(df_w.index, df_w['MA20'],  linewidth=1, color='green',  alpha=0.9, label='MA20')
+        ax1.plot(df_w.index, df_w['MA200'], linewidth=1, color='red',    alpha=0.9, label='MA200')
+        ax1.legend(loc='upper left', fontsize=8)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m'))
+        ax1.set_ylabel('Price (KRW)')
+        ax1.grid(True, alpha=0.3)
+
+        colors = ['#d32f2f' if c >= o else '#1976d2'
+                  for c, o in zip(df_w['Close'], df_w['Open'])]
+        ax2.bar(df_w.index, df_w['Volume'], color=colors, alpha=0.7)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m'))
+        ax2.set_ylabel('Volume')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(path_weekly, dpi=100, bbox_inches='tight')
+        plt.close()
+
+
+def get_us_report_text(query: str) -> str:
+    """미국 종목 리포트 텍스트 생성 (동기 함수 - executor에서 실행)"""
+    ticker = US_STOCK_MAP.get(query.lower(), US_STOCK_MAP.get(query, query.upper()))
+    try:
+        stock = yf.Ticker(ticker)
+        info  = stock.info
+        hist  = stock.history(period='1y')
+        if hist.empty:
+            return f"❌ '{query}' 종목을 찾을 수 없습니다. (ticker: {ticker})"
+
+        cur   = hist['Close'].iloc[-1]
+        prev  = hist['Close'].iloc[-2] if len(hist) > 1 else cur
+        chg   = cur - prev
+        chg_p = chg / prev * 100
+
+        w_chg = (cur - hist['Close'].iloc[-5])  / hist['Close'].iloc[-5]  * 100 if len(hist) >= 5  else 0.0
+        m_chg = (cur - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20] * 100 if len(hist) >= 20 else 0.0
+        ytd   = (cur - hist['Close'].iloc[0])   / hist['Close'].iloc[0]   * 100
+        hi52  = hist['High'].max()
+        lo52  = hist['Low'].min()
+
+        name      = info.get('longName', ticker)
+        sector    = info.get('sector', 'N/A')
+        industry  = info.get('industry', 'N/A')
+        mkt_cap   = info.get('marketCap', 0) or 0
+        per       = info.get('trailingPE') or 0
+        fwd_per   = info.get('forwardPE')  or 0
+        beta      = info.get('beta')       or 0
+        div_yield = (info.get('dividendYield') or 0) * 100
+
+        cap_str = f"${mkt_cap/1e12:.2f}T" if mkt_cap >= 1e12 else f"${mkt_cap/1e9:.1f}B"
+        arrow   = '▲' if chg >= 0 else '▼'
+        sign    = '+' if chg >= 0 else ''
+
+        # EPS 서프라이즈 (최근 4분기)
+        eps_lines = ''
+        try:
+            cal = stock.earnings_dates
+            if cal is not None and not cal.empty:
+                recent = cal.dropna(subset=['EPS Estimate', 'Reported EPS']).head(4)
+                if not recent.empty:
+                    eps_lines = '\n📌 **EPS 서프라이즈 (최근 4분기)**\n'
+                    for dt, row in recent.iterrows():
+                        est = row['EPS Estimate']
+                        act = row['Reported EPS']
+                        beat = '✅ Beat' if act >= est else '❌ Miss'
+                        eps_lines += f"{str(dt)[:10]} | est ${est:.2f} → actual ${act:.2f}  {beat}\n"
+        except Exception:
+            pass
+
+        return (
+            f"🏢 **{name} ({ticker})**\n"
+            f"섹터: {sector} | {industry}\n"
+            f"시가총액: {cap_str}\n\n"
+            f"💵 **실시간 주가**\n"
+            f"현재가: ${cur:.2f}  {arrow} {sign}${chg:.2f} ({sign}{chg_p:.1f}%)\n"
+            f"금주: {w_chg:+.1f}%  |  금월: {m_chg:+.1f}%  |  YTD: {ytd:+.1f}%\n"
+            f"52W High: ${hi52:.2f}  |  Low: ${lo52:.2f}\n\n"
+            f"📊 **밸류에이션**\n"
+            f"PER: {per:.1f}x  |  Fwd PER: {fwd_per:.1f}x  |  Beta: {beta:.2f}\n"
+            f"배당수익률: {div_yield:.2f}%"
+            f"{eps_lines}"
+        )
+    except Exception as e:
+        return f"⚠️ 오류가 발생했습니다: {e}"
+
+
+def _draw_chart_us(ticker_raw: str, path_daily: str, path_weekly: str):
+    """미국 종목 일봉(3개월) + 주봉(5년) 차트 저장 (동기 함수 - executor에서 실행)"""
+    ticker = US_STOCK_MAP.get(ticker_raw.lower(), US_STOCK_MAP.get(ticker_raw, ticker_raw.upper()))
+    stock  = yf.Ticker(ticker)
+
+    for period, interval, path, fmt, title_suffix in [
+        ('3mo', '1d',  path_daily,  '%m/%d',  'Daily (3M)'),
+        ('5y',  '1wk', path_weekly, '%Y/%m',  'Weekly (5Y)'),
+    ]:
+        df = stock.history(period=period, interval=interval)
+        if df.empty:
+            continue
+        ma_short = 5 if interval == '1d' else 5
+        ma_mid   = 20
+        ma_long  = 60 if interval == '1d' else 200
+        df['MA_S'] = df['Close'].rolling(ma_short).mean()
+        df['MA_M'] = df['Close'].rolling(ma_mid).mean()
+        df['MA_L'] = df['Close'].rolling(ma_long).mean()
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
+                                        gridspec_kw={'height_ratios': [3, 1]})
+        fig.suptitle(f'{ticker} {title_suffix}', fontsize=13)
+        ax1.plot(df.index, df['Close'], linewidth=1.5, color='#1f77b4', label='Close')
+        ax1.plot(df.index, df['MA_S'], linewidth=1, color='orange', alpha=0.9, label=f'MA{ma_short}')
+        ax1.plot(df.index, df['MA_M'], linewidth=1, color='green',  alpha=0.9, label=f'MA{ma_mid}')
+        ax1.plot(df.index, df['MA_L'], linewidth=1, color='red',    alpha=0.9, label=f'MA{ma_long}')
+        ax1.legend(loc='upper left', fontsize=8)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
+        ax1.set_ylabel('Price (USD)')
+        ax1.grid(True, alpha=0.3)
+
+        colors = ['#d32f2f' if c >= o else '#1976d2'
+                  for c, o in zip(df['Close'], df['Open'])]
+        ax2.bar(df.index, df['Volume'], color=colors, alpha=0.7)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
+        ax2.set_ylabel('Volume')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(path, dpi=100, bbox_inches='tight')
+        plt.close()
 
 # ==========================================
 # 3. 재무 분석 함수
@@ -380,16 +651,75 @@ async def on_bot_msg(event):
 
     if text.startswith('/재무'):
         comp = text.replace('/재무', '').strip()
-        await event.reply(f"📊 **{comp}**의 재무 데이터를 분석 중입니다...")
-        res = await get_finance_summary(comp)
-        full = f"📈 **[{comp} 재무 트렌드 분석]**\n\n{res}"
+        await event.reply(f"📊 **{comp}** 분석 중... (주가 조회 + DART 재무 + 차트 생성)")
+        loop = asyncio.get_event_loop()
+
+        # DART 재무 분석 + yfinance 주가 병렬 처리
+        ticker = get_kr_ticker(comp)
+        fin_task   = asyncio.ensure_future(get_finance_summary(comp))
+        price_task = loop.run_in_executor(_executor, get_price_info_kr, ticker, comp) if ticker else None
+
+        fin_text   = await fin_task
+        price_text = (await price_task) if price_task else ''
+
+        # 차트 생성
+        charts = []
+        if ticker:
+            path_d = os.path.join(CHARTS_DIR, f"{comp}_daily.png")
+            path_w = os.path.join(CHARTS_DIR, f"{comp}_weekly.png")
+            await loop.run_in_executor(_executor, _draw_chart_kr, ticker, comp, path_d, path_w)
+            charts = [p for p in [path_d, path_w] if os.path.exists(p)]
+
+        # 텍스트 전송
+        header = f"📈 **[{comp} 투자 분석 리포트]**\n\n"
+        if price_text:
+            header += price_text + "\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        full = header + fin_text
         for i in range(0, len(full), 4096):
             await event.reply(full[i:i+4096])
+
+        # 차트 이미지 전송 후 파일 삭제
+        if charts:
+            await bot_client.send_file(MY_TELEGRAM_ID, charts)
+            for p in charts:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
 
     elif text == '/장보기':
         await send_weekly_info('shop')
     elif text == '/나들이':
         await send_weekly_info('out')
+
+    elif text.startswith('/us ') or text.lower().startswith('/us '):
+        query = text[4:].strip()
+        await event.reply(f"🇺🇸 **{query}** 미국 종목 조회 중...")
+        loop = asyncio.get_event_loop()
+
+        # 리포트 텍스트 + 차트 병렬 생성
+        ticker = US_STOCK_MAP.get(query.lower(), US_STOCK_MAP.get(query, query.upper()))
+        report_task = loop.run_in_executor(_executor, get_us_report_text, query)
+
+        path_d = os.path.join(CHARTS_DIR, f"US_{ticker}_daily.png")
+        path_w = os.path.join(CHARTS_DIR, f"US_{ticker}_weekly.png")
+        chart_task  = loop.run_in_executor(_executor, _draw_chart_us, query, path_d, path_w)
+
+        report_text = await report_task
+        await chart_task
+
+        full = f"📊 **[미국 종목 리포트]**\n\n{report_text}"
+        for i in range(0, len(full), 4096):
+            await event.reply(full[i:i+4096])
+
+        charts = [p for p in [path_d, path_w] if os.path.exists(p)]
+        if charts:
+            await bot_client.send_file(MY_TELEGRAM_ID, charts)
+            for p in charts:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
 
     elif text.startswith('/공시'):
         comp = text.replace('/공시', '').strip()
@@ -430,7 +760,7 @@ async def main():
     scheduler.start()
 
     # 봇 가동 완료 알림 + 사용 가능한 명령어 안내
-    await bot_client.send_message(MY_TELEGRAM_ID, "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n🔹 명령어: /재무, /공시, /장보기, /나들이\n🔹 자동 기능: 외부 채널 링크 자동 요약 가동 중")
+    await bot_client.send_message(MY_TELEGRAM_ID, "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n🔹 국내: /재무 삼성전자, /공시 삼성전자\n🔹 미국: /us NVDA, /us 엔비디아\n🔹 생활: /장보기, /나들이\n🔹 자동: 외부 채널 링크 자동 요약 가동 중")
 
     # 두 클라이언트를 동시에 실행하여 채널 수신과 봇 명령 처리를 병행
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
