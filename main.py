@@ -911,7 +911,6 @@ async def check_dart_watchlist():
         save_seen_filings(new_seen)
 
 
-@user_client.on(events.NewMessage(chats=WATCH_CHANNELS))
 async def on_channel_msg(event):
     """
     WATCH_CHANNELS 에 등록된 채널에 새 메시지가 올라올 때 자동 실행됩니다.
@@ -1003,6 +1002,12 @@ async def on_channel_msg(event):
                 MY_TELEGRAM_ID,
                 f"📄 **[PDF 수신]**\n📡 채널: {source_name}\n{caption}\n\n⚠️ 분석 중 오류 발생: {e}\n📎 파일명: {filename}"
             )
+
+
+if WATCH_CHANNELS:
+    user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=WATCH_CHANNELS))
+else:
+    log.info("WATCH_CHANNELS 미설정 — 채널 자동 요약 비활성화")
 
 
 @bot_client.on(events.NewMessage())
