@@ -966,6 +966,10 @@ async def on_channel_msg(event):
 
     urls = re.findall(r'https?://[^\s]+', event.text or "")
 
+    # 채널 원문 텍스트 (URL 제거한 캡션/제목)
+    original_text = (event.text or '').strip()
+    caption_text = re.sub(r'https?://[^\s]+', '', original_text).strip()
+
     loop = asyncio.get_running_loop()
 
     # ── 유튜브 ──────────────────────────────────────────
@@ -973,6 +977,10 @@ async def on_channel_msg(event):
         yt_url = urls[0]
         vid_id = extract_youtube_id(yt_url)
         if vid_id:
+            source_header = f"▶️ **[유튜브 인사이트 요약]**\n📡 출처 채널: {source_name}"
+            if caption_text:
+                source_header += f"\n📌 원문: {caption_text[:200]}"
+            source_header += f"\n🔗 링크: {yt_url}"
             try:
                 segments = await loop.run_in_executor(
                     _executor,
@@ -988,17 +996,21 @@ async def on_channel_msg(event):
                 )
                 await bot_client.send_message(
                     MY_TELEGRAM_ID,
-                    f"▶️ **[유튜브 인사이트 요약]**\n📡 채널: {source_name}\n\n{res.text}\n\n📎 원문: {yt_url}"
+                    f"{source_header}\n\n{res.text}"
                 )
             except Exception as e:
                 await bot_client.send_message(
                     MY_TELEGRAM_ID,
-                    f"▶️ **[유튜브]** 자막을 가져올 수 없습니다 ({e})\n📡 채널: {source_name}\n📎 원문: {yt_url}"
+                    f"{source_header}\n\n⚠️ 자막을 가져올 수 없습니다: {e}"
                 )
         return
 
     # ── 기사 / 블로그 ────────────────────────────────────
     if urls:
+        source_header = f"🌐 **[네모 봇 인사이트 요약]**\n📡 출처 채널: {source_name}"
+        if caption_text:
+            source_header += f"\n📌 원문: {caption_text[:200]}"
+        source_header += f"\n🔗 링크: {urls[0]}"
         text = await loop.run_in_executor(_executor, fetch_webpage_text, urls[0])
         if text:
             res = await loop.run_in_executor(
@@ -1010,7 +1022,7 @@ async def on_channel_msg(event):
             )
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"🌐 **[네모 봇 인사이트 요약]**\n📡 채널: {source_name}\n\n{res.text}\n\n📎 원문: {urls[0]}"
+                f"{source_header}\n\n{res.text}"
             )
         return
 
@@ -1027,9 +1039,10 @@ async def on_channel_msg(event):
             )
             return
 
+        pdf_header = f"📡 출처 채널: {source_name}\n📌 원문: {caption}\n📎 파일명: {filename}"
         await bot_client.send_message(
             MY_TELEGRAM_ID,
-            f"📄 **[PDF 분석 중...]**\n📡 채널: {source_name}\n{caption}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
+            f"📄 **[PDF 분석 중...]**\n{pdf_header}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
         )
         uploaded = None
         try:
@@ -1046,12 +1059,12 @@ async def on_channel_msg(event):
             )
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📊 **[PDF 리포트 분석]**\n📡 채널: {source_name}\n_{caption}_\n\n{response.text}\n\n📎 파일명: {filename}"
+                f"📊 **[PDF 리포트 분석]**\n{pdf_header}\n\n{response.text}"
             )
         except Exception as e:
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📄 **[PDF 수신]**\n📡 채널: {source_name}\n{caption}\n\n⚠️ 분석 중 오류 발생: {e}\n📎 파일명: {filename}"
+                f"📄 **[PDF 수신]**\n{pdf_header}\n\n⚠️ 분석 중 오류 발생: {e}"
             )
         finally:
             # Gemini 서버 파일 + 로컬 임시 파일 삭제 (성공·실패 무관)
