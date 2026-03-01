@@ -54,7 +54,7 @@ import logging
 import re
 import json
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageMediaDocument
@@ -686,6 +686,381 @@ def _draw_chart_financials(ticker_sym: str, company: str, path: str):
 
 
 # ==========================================
+# /report 국내 종목 종합 리포트 헬퍼 함수들
+# ==========================================
+
+def _stock_code_from_ticker(ticker: str) -> str:
+    """yfinance ticker에서 종목코드만 추출 (예: 005930.KS → 005930)"""
+    return ticker.split('.')[0]
+
+
+def _get_corp_overview_sync(company: str, ticker: str) -> str:
+    """DART + yfinance로 기업 개요 텍스트 생성 (동기 함수 - executor에서 실행)"""
+    lines = ["🏢 **기업 개요**"]
+    try:
+        result = dart.find_corp(company)
+        if result is not None and not result.empty:
+            listed = result[result['corp_cls'].isin(['Y', 'K'])]
+            row = listed.iloc[0] if not listed.empty else result.iloc[0]
+            cls_map = {'Y': 'KOSPI', 'K': 'KOSDAQ', 'N': '코넥스', 'E': '기타'}
+            cls_name = cls_map.get(str(row.get('corp_cls', '')), '기타')
+            corp_code = str(row.get('corp_code', ''))
+            lines.append(f"거래소: {cls_name}  |  종목코드: {_stock_code_from_ticker(ticker)}")
+            try:
+                info = dart.company(corp_code)
+                if info is not None:
+                    ceo = info.get('ceo_nm', '')
+                    acc = info.get('acc_mt', '')
+                    hm  = info.get('hm_url', '')
+                    if ceo:
+                        lines.append(f"대표이사: {ceo}")
+                    if acc:
+                        lines.append(f"결산월: {acc}월")
+                    if hm:
+                        lines.append(f"홈페이지: {hm}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        info = yf.Ticker(ticker).info
+        sector   = info.get('sector', '')
+        industry = info.get('industry', '')
+        emp      = info.get('fullTimeEmployees', 0)
+        if sector:
+            lines.append(f"섹터: {sector}")
+        if industry:
+            lines.append(f"업종: {industry}")
+        if emp:
+            lines.append(f"임직원: {emp:,}명")
+    except Exception:
+        pass
+    return '\n'.join(lines)
+
+
+def _get_dart_recent_filings_sync(company: str) -> str:
+    """DART 최근 3개월 중요 공시 최대 5건 (동기 함수 - executor에서 실행)"""
+    try:
+        start_dt = (date.today() - timedelta(days=90)).strftime('%Y-%m-%d')
+        reports = dart.list(company, start=start_dt)
+        if reports is None or reports.empty:
+            return "📋 **최근 주요 공시**\n최근 3개월 내 공시 없음"
+        IMPORTANT_KW = [
+            '잠정실적', '시설투자', '내부자', '자기주식', '최대주주',
+            '유상증자', '합병', '분할', '전환사채', '임원변동', '특수관계인',
+        ]
+        def score(nm: str) -> int:
+            return sum(1 for kw in IMPORTANT_KW if kw in nm)
+        sorted_rows = sorted(reports.iterrows(), key=lambda x: score(str(x[1]['report_nm'])), reverse=True)
+        lines = ["📋 **최근 주요 공시** (3개월)"]
+        for _, row in sorted_rows[:5]:
+            nm    = str(row['report_nm'])
+            dt    = str(row['rcept_dt'])
+            rcpNo = str(row['rcept_no'])
+            link  = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcpNo}"
+            flag  = "🚨" if score(nm) > 0 else "📢"
+            lines.append(f"{flag} {dt} | [{nm}]({link})")
+        return '\n'.join(lines)
+    except Exception as e:
+        return f"📋 **최근 주요 공시**\n(조회 실패: {e})"
+
+
+def _get_quarterly_financials_text_sync(ticker: str) -> str:
+    """yfinance 분기 실적 텍스트 테이블 (최근 6분기, QoQ%, TTM) (동기 함수)"""
+    try:
+        df = yf.Ticker(ticker).quarterly_income_stmt
+        if df is None or df.empty:
+            return "📊 **분기 실적**\n(데이터 없음)"
+        df = df.sort_index(axis=1).iloc[:, -6:]
+
+        def _find_row(candidates):
+            for name in candidates:
+                if name in df.index:
+                    return df.loc[name]
+            return None
+
+        rev = _find_row(['Total Revenue', 'Revenue'])
+        oi  = _find_row(['Operating Income', 'EBIT', 'Operating Income Loss'])
+        if rev is None:
+            return "📊 **분기 실적**\n(매출 데이터 없음)"
+
+        is_krw = ticker.endswith('.KS') or ticker.endswith('.KQ')
+        unit   = 1e12 if is_krw else 1e9
+        ulabel = '조원' if is_krw else 'B$'
+
+        def _ql(dt):
+            return f"{dt.year}Q{(dt.month - 1) // 3 + 1}"
+
+        labels   = [_ql(c) for c in df.columns]
+        rev_vals = pd.to_numeric(rev, errors='coerce') / unit
+        oi_vals  = pd.to_numeric(oi,  errors='coerce') / unit if oi is not None else None
+
+        lines = [f"📊 **분기 실적** ({ulabel})\n```"]
+        lines.append(f"{'분기':<7} {'매출':>6} {'영업이익':>7} {'OPM':>5} {'QoQ%':>7}")
+        lines.append("-" * 38)
+        for i, lbl in enumerate(labels):
+            rv  = rev_vals.iloc[i]
+            ov  = oi_vals.iloc[i] if oi_vals is not None else float('nan')
+            opm = (ov / rv * 100) if not (pd.isna(rv) or pd.isna(ov)) and rv != 0 else float('nan')
+            qoq = float('nan')
+            if i > 0:
+                prev = rev_vals.iloc[i - 1]
+                if not pd.isna(prev) and prev != 0:
+                    qoq = (rv - prev) / abs(prev) * 100
+            rv_s  = f"{rv:.1f}"   if not pd.isna(rv)  else "-"
+            ov_s  = f"{ov:.1f}"   if not pd.isna(ov)  else "-"
+            opm_s = f"{opm:.1f}%" if not pd.isna(opm) else "-"
+            qoq_s = f"{qoq:+.1f}%" if not pd.isna(qoq) else "-"
+            lines.append(f"{lbl:<7} {rv_s:>6} {ov_s:>7} {opm_s:>5} {qoq_s:>7}")
+
+        # TTM 행
+        rev_n = pd.to_numeric(rev, errors='coerce')
+        oi_n  = pd.to_numeric(oi,  errors='coerce') if oi is not None else None
+        if len(rev_n.dropna()) >= 4:
+            ttm_rev = rev_n.iloc[-4:].sum() / unit
+            ttm_oi  = oi_n.iloc[-4:].sum() / unit if oi_n is not None else None
+            ttm_opm = (ttm_oi / ttm_rev * 100) if ttm_oi is not None and ttm_rev != 0 else None
+            lines.append("-" * 38)
+            oi_s  = f"{ttm_oi:.1f}"   if ttm_oi  is not None else "-"
+            opm_s = f"{ttm_opm:.1f}%" if ttm_opm is not None else "-"
+            lines.append(f"{'TTM':<7} {ttm_rev:.1f:>6} {oi_s:>7} {opm_s:>5}")
+        lines.append("```")
+        return '\n'.join(lines)
+    except Exception as e:
+        return f"📊 **분기 실적**\n(조회 실패: {e})"
+
+
+def _get_naver_research_sync(company: str) -> str:
+    """네이버 금융 증권사 리포트 크롤링 최근 5건 (동기 함수 - executor에서 실행)"""
+    try:
+        encoded = urllib.parse.quote(company)
+        url = f"https://finance.naver.com/research/company_list.nhn?keyword={encoded}&x=0&y=0"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('euc-kr', errors='ignore')
+        entries = re.findall(
+            r'href="(/research/company_read\.nhn\?nid=\d+)"[^>]*>\s*([^<]{5,100})\s*</a>',
+            html,
+        )
+        if not entries:
+            return "📄 **증권사 리포트**\n(최근 리포트 없음)"
+        lines = ["📄 **증권사 리포트** (최근)"]
+        seen, count = set(), 0
+        for path, title in entries:
+            title = title.strip()
+            if title in seen or len(title) < 5:
+                continue
+            seen.add(title)
+            lines.append(f"• [{title}](https://finance.naver.com{path})")
+            count += 1
+            if count >= 5:
+                break
+        return '\n'.join(lines) if count > 0 else "📄 **증권사 리포트**\n(최근 리포트 없음)"
+    except Exception as e:
+        return f"📄 **증권사 리포트**\n(조회 실패: {e})"
+
+
+def _draw_report_financials(ticker: str, company: str, path_pnl: str, path_ttm_rev: str, path_ttm_op: str):
+    """분기 손익 차트 3종 저장 (동기 함수 - executor에서 실행)
+
+    path_pnl     : 분기별 매출+영업이익 grouped bar + OPM% 선
+    path_ttm_rev : TTM 매출 추이 선차트
+    path_ttm_op  : TTM 영업이익 추이 선차트 (적자 구간 빨강)
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.quarterly_income_stmt
+        if df is None or df.empty:
+            return
+        df = df.sort_index(axis=1).iloc[:, -8:]
+
+        def _find_row(candidates):
+            for name in candidates:
+                if name in df.index:
+                    return df.loc[name]
+            return None
+
+        rev = _find_row(['Total Revenue', 'Revenue'])
+        oi  = _find_row(['Operating Income', 'EBIT', 'Operating Income Loss'])
+        if rev is None:
+            return
+
+        is_krw = ticker.endswith('.KS') or ticker.endswith('.KQ')
+        unit   = 1e12 if is_krw else 1e9
+        ulabel = '조원' if is_krw else 'B$'
+
+        def _ql(dt):
+            return f"{dt.year}Q{(dt.month - 1) // 3 + 1}"
+
+        labels   = [_ql(c) for c in df.columns]
+        rev_vals = pd.to_numeric(rev, errors='coerce').fillna(0) / unit
+        oi_vals  = pd.to_numeric(oi,  errors='coerce').fillna(0) / unit if oi is not None else None
+
+        x     = list(range(len(labels)))
+        width = 0.35
+
+        # ── Chart 1: 분기별 손익 (grouped bar + OPM% 선) ─────────────
+        fig, ax1 = plt.subplots(figsize=(10, 5))
+        ax1.bar([i - width / 2 for i in x], rev_vals, width, label=f'매출 ({ulabel})',    color='#4C72B0', alpha=0.85)
+        ax1.bar([i + width / 2 for i in x], oi_vals,  width, label=f'영업이익 ({ulabel})', color='#DD8452', alpha=0.85)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(labels, fontsize=8, rotation=30)
+        ax1.set_ylabel(f'({ulabel})')
+        ax1.legend(loc='upper left', fontsize=8)
+        ax1.grid(axis='y', alpha=0.3)
+        ax1.axhline(0, color='black', linewidth=0.8)
+
+        if oi_vals is not None:
+            opm_vals = [(o / r * 100) if r != 0 else 0 for o, r in zip(oi_vals, rev_vals)]
+            ax2 = ax1.twinx()
+            ax2.plot(x, opm_vals, color='red', linewidth=1.5, linestyle='--',
+                     marker='o', markersize=4, label='OPM%')
+            ax2.set_ylabel('OPM (%)', color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+            ax2.legend(loc='upper right', fontsize=8)
+
+        fig.suptitle(f'{company} 분기별 손익', fontsize=13, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(path_pnl, dpi=100, bbox_inches='tight')
+        plt.close()
+
+        # ── Chart 2: TTM 매출 추이 ────────────────────────────────────
+        if len(rev_vals) >= 4:
+            ttm_rev = [rev_vals.iloc[i - 3:i + 1].sum() for i in range(3, len(rev_vals))]
+            ttm_lbl = labels[3:]
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(range(len(ttm_lbl)), ttm_rev, color='#4C72B0', linewidth=2, marker='o', markersize=5)
+            ax.fill_between(range(len(ttm_lbl)), ttm_rev, alpha=0.15, color='#4C72B0')
+            for i, v in enumerate(ttm_rev):
+                ax.text(i, v, f'{v:.1f}', ha='center', va='bottom', fontsize=8)
+            ax.set_xticks(range(len(ttm_lbl)))
+            ax.set_xticklabels(ttm_lbl, fontsize=8, rotation=30)
+            ax.set_ylabel(f'TTM 매출 ({ulabel})')
+            ax.grid(True, alpha=0.3)
+            fig.suptitle(f'{company} TTM 매출 추이', fontsize=13, fontweight='bold')
+            plt.tight_layout()
+            plt.savefig(path_ttm_rev, dpi=100, bbox_inches='tight')
+            plt.close()
+
+        # ── Chart 3: TTM 영업이익 추이 (적자 빨강) ────────────────────
+        if oi_vals is not None and len(oi_vals) >= 4:
+            ttm_oi  = [oi_vals.iloc[i - 3:i + 1].sum() for i in range(3, len(oi_vals))]
+            ttm_lbl = labels[3:]
+            pos_col = '#55A868'
+            neg_col = '#d32f2f'
+            colors  = [neg_col if v < 0 else pos_col for v in ttm_oi]
+            fig, ax = plt.subplots(figsize=(10, 4))
+            for i in range(len(ttm_lbl) - 1):
+                c = neg_col if ttm_oi[i] < 0 or ttm_oi[i + 1] < 0 else pos_col
+                ax.plot([i, i + 1], [ttm_oi[i], ttm_oi[i + 1]], color=c, linewidth=2)
+            ax.scatter(range(len(ttm_lbl)), ttm_oi, color=colors, zorder=5, s=50)
+            for i, v in enumerate(ttm_oi):
+                ax.text(i, v, f'{v:.1f}', ha='center',
+                        va='bottom' if v >= 0 else 'top', fontsize=8)
+            ax.fill_between(range(len(ttm_lbl)), ttm_oi, 0,
+                            where=[v >= 0 for v in ttm_oi], alpha=0.1, color=pos_col)
+            ax.fill_between(range(len(ttm_lbl)), ttm_oi, 0,
+                            where=[v < 0 for v in ttm_oi],  alpha=0.1, color=neg_col)
+            ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+            ax.set_xticks(range(len(ttm_lbl)))
+            ax.set_xticklabels(ttm_lbl, fontsize=8, rotation=30)
+            ax.set_ylabel(f'TTM 영업이익 ({ulabel})')
+            ax.grid(True, alpha=0.3)
+            fig.suptitle(f'{company} TTM 영업이익 추이', fontsize=13, fontweight='bold')
+            plt.tight_layout()
+            plt.savefig(path_ttm_op, dpi=100, bbox_inches='tight')
+            plt.close()
+
+    except Exception as e:
+        log.warning("_draw_report_financials failed for %s: %s", ticker, e)
+        try:
+            plt.close()
+        except Exception:
+            pass
+
+
+def _draw_chart_investor_flow(stock_code: str, company: str, path: str):
+    """외국인 누적 순매수 차트 저장 - 네이버 금융 크롤링 (동기 함수 - executor에서 실행)"""
+    try:
+        all_dates: list = []
+        all_net: list   = []
+
+        for page in range(1, 14):  # 최대 13페이지 ≈ 130거래일 ≈ 6개월
+            url = f"https://finance.naver.com/item/frgn.nhn?code={stock_code}&page={page}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    html = resp.read().decode('euc-kr', errors='ignore')
+            except Exception:
+                break
+
+            found_any = False
+            for row_html in html.split('<tr>'):
+                cells = re.findall(r'<td[^>]*>([\s\S]*?)</td>', row_html)
+                cells = [re.sub(r'<[^>]+>', '', c).strip().replace(',', '').replace('\xa0', '') for c in cells]
+                cells = [c for c in cells if c]
+                if not cells or not re.match(r'^\d{4}\.\d{2}\.\d{2}$', cells[0]):
+                    continue
+                try:
+                    d = datetime.strptime(cells[0], '%Y.%m.%d')
+                except ValueError:
+                    continue
+                if len(cells) < 5:
+                    continue
+                raw = cells[4].replace('+', '').strip()
+                if not raw or raw == '-':
+                    continue
+                try:
+                    net = int(raw)
+                    all_dates.append(d)
+                    all_net.append(net)
+                    found_any = True
+                except ValueError:
+                    continue
+
+            if not found_any:
+                break
+
+        if len(all_dates) < 5:
+            return  # 데이터 부족 시 차트 생략
+
+        pairs       = sorted(zip(all_dates, all_net))
+        all_dates   = [p[0] for p in pairs][-120:]
+        all_net     = [p[1] for p in pairs][-120:]
+
+        # 누적 순매수 (시작 기준점 0)
+        cum, total = [], 0
+        for v in all_net:
+            total += v
+            cum.append(total)
+        base = cum[0]
+        cum  = [v - base for v in cum]
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(all_dates, cum, color='#d32f2f', linewidth=1.5, label='외국인 누적순매수')
+        ax.fill_between(all_dates, cum, 0,
+                        where=[v >= 0 for v in cum], alpha=0.15, color='#d32f2f')
+        ax.fill_between(all_dates, cum, 0,
+                        where=[v < 0  for v in cum], alpha=0.15, color='#1565C0')
+        ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+        ax.set_ylabel('누적 순매수 (주)')
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        fig.suptitle(f'{company} 외국인 누적 순매수 (6개월)', fontsize=13, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(path, dpi=100, bbox_inches='tight')
+        plt.close()
+    except Exception as e:
+        log.warning("_draw_chart_investor_flow failed: %s", e)
+        try:
+            plt.close()
+        except Exception:
+            pass
+
+
+# ==========================================
 # 3. 재무 분석 함수
 # ==========================================
 def _get_finance_summary_sync(company):
@@ -1082,6 +1457,70 @@ async def on_channel_msg(event):
                     pass
 
 
+# ==========================================
+# /report 종합 리포트 메인 핸들러
+# ==========================================
+async def _handle_report(event, company: str):
+    """국내 종목 종합 리포트 생성 + 차트 6종 앨범 전송"""
+    await event.reply(
+        f"📊 **{company}** 종합 리포트 생성 중...\n"
+        "⏳ 기업개요 · 주가 · 공시 · 분기실적 · 증권사리포트 · 차트 6종"
+    )
+    loop   = asyncio.get_running_loop()
+    ticker = get_kr_ticker(company)
+    if not ticker:
+        return await event.reply(f"❌ '{company}' 종목을 찾을 수 없습니다.\n(DART 등록 종목명으로 검색해주세요)")
+
+    stock_code = _stock_code_from_ticker(ticker)
+
+    # ── 텍스트 데이터 병렬 수집 ───────────────────────────────────────
+    overview_text, price_text, filings_text, fin_text, research_text = await asyncio.gather(
+        loop.run_in_executor(_executor, _get_corp_overview_sync, company, ticker),
+        loop.run_in_executor(_executor, get_price_info_kr, ticker, company),
+        loop.run_in_executor(_executor, _get_dart_recent_filings_sync, company),
+        loop.run_in_executor(_executor, _get_quarterly_financials_text_sync, ticker),
+        loop.run_in_executor(_executor, _get_naver_research_sync, company),
+    )
+
+    # ── 차트 6종 병렬 생성 ────────────────────────────────────────────
+    path_pnl      = os.path.join(CHARTS_DIR, f"{company}_pnl.png")
+    path_ttm_rev  = os.path.join(CHARTS_DIR, f"{company}_ttm_rev.png")
+    path_ttm_op   = os.path.join(CHARTS_DIR, f"{company}_ttm_op.png")
+    path_daily    = os.path.join(CHARTS_DIR, f"{company}_rpt_daily.png")
+    path_weekly   = os.path.join(CHARTS_DIR, f"{company}_rpt_weekly.png")
+    path_investor = os.path.join(CHARTS_DIR, f"{company}_investor.png")
+
+    await asyncio.gather(
+        loop.run_in_executor(_executor, _draw_report_financials, ticker, company, path_pnl, path_ttm_rev, path_ttm_op),
+        loop.run_in_executor(_executor, _draw_chart_kr, ticker, company, path_daily, path_weekly),
+        loop.run_in_executor(_executor, _draw_chart_investor_flow, stock_code, company, path_investor),
+    )
+
+    # ── 텍스트 리포트 전송 ────────────────────────────────────────────
+    sep  = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    full = (
+        f"📈 **[{company} 종합 리포트]**\n\n"
+        f"{overview_text}{sep}"
+        f"{price_text}{sep}"
+        f"{filings_text}{sep}"
+        f"{fin_text}{sep}"
+        f"{research_text}"
+    )
+    for i in range(0, len(full), 4096):
+        await event.reply(full[i:i + 4096])
+
+    # ── 차트 앨범 전송 (생성된 파일만) ───────────────────────────────
+    chart_order = [path_pnl, path_ttm_rev, path_ttm_op, path_daily, path_weekly, path_investor]
+    charts = [p for p in chart_order if os.path.exists(p)]
+    if charts:
+        await bot_client.send_file(MY_TELEGRAM_ID, charts)
+        for p in charts:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+
 # NOTE: 핸들러 등록은 user_client.start() 이후 main() 안에서 수행됩니다.
 
 
@@ -1112,6 +1551,12 @@ async def on_bot_msg(event):
     if text == '/시황':
         await event.reply("🌅 미국 시황 데이터 수집 중...")
         await send_us_morning()
+
+    elif text.startswith('/report') or text.startswith('/리포트'):
+        comp = text.replace('/report', '').replace('/리포트', '').strip()
+        if not comp:
+            return await event.reply("사용법: /report 삼성전자")
+        await _handle_report(event, comp)
 
     elif text.startswith('/재무'):
         comp = text.replace('/재무', '').strip()
@@ -1285,6 +1730,9 @@ async def on_bot_msg(event):
             "📖 **네모 봇 명령어 도움말**\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "📊 **주식 조회**\n"
+            "  `/report <종목명>` — 국내 종목 **종합 리포트** (추천)\n"
+            "    └ 기업개요 · 실시간주가 · 최근공시 · 분기실적 · 증권사리포트\n"
+            "    └ 차트 6종: 분기손익 · TTM매출 · TTM영업이익 · 일봉 · 주봉 · 외국인순매수\n"
             "  `/재무 <종목명>` — 국내 종목 DART 재무 분석 + 주가 + 차트\n"
             "    └ 일봉(3M) · 주봉(5Y) · 분기 실적(TTM) 차트 자동 첨부\n"
             "  `/공시 <종목명>` — 국내 종목 최근 주요 공시 3건\n"
@@ -1472,6 +1920,7 @@ async def main():
     # 봇 가동 완료 알림 + 사용 가능한 명령어 안내
     await bot_client.send_message(MY_TELEGRAM_ID,
         "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n"
+        "🔹 **종합리포트**: /report 삼성전자  (차트 6종 + 공시 + 실적 + 증권사리포트)\n"
         "🔹 국내: /재무 삼성전자, /공시 삼성전자\n"
         "🔹 미국: /us NVDA, /us 엔비디아\n"
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
