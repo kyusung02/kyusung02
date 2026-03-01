@@ -823,7 +823,7 @@ def _get_quarterly_financials_text_sync(ticker: str) -> str:
             lines.append("-" * 38)
             oi_s  = f"{ttm_oi:.1f}"   if ttm_oi  is not None else "-"
             opm_s = f"{ttm_opm:.1f}%" if ttm_opm is not None else "-"
-            lines.append(f"{'TTM':<7} {ttm_rev:.1f:>6} {oi_s:>7} {opm_s:>5}")
+            lines.append(f"{'TTM':<7} {ttm_rev:>6.1f} {oi_s:>7} {opm_s:>5}")
         lines.append("```")
         return '\n'.join(lines)
     except Exception as e:
@@ -856,6 +856,8 @@ def _get_naver_research_sync(company: str) -> str:
             if count >= 5:
                 break
         return '\n'.join(lines) if count > 0 else "📄 **증권사 리포트**\n(최근 리포트 없음)"
+    except UnicodeEncodeError:
+        return "📄 **증권사 리포트**\n(네이버 금융 접속 오류 — 리다이렉트 인코딩 문제)"
     except Exception as e:
         return f"📄 **증권사 리포트**\n(조회 실패: {e})"
 
@@ -991,6 +993,8 @@ def _draw_chart_investor_flow(stock_code: str, company: str, path: str):
             try:
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     html = resp.read().decode('euc-kr', errors='ignore')
+            except UnicodeEncodeError:
+                break  # 리다이렉트 인코딩 오류 → 차트 생략
             except Exception:
                 break
 
