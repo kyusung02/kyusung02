@@ -147,6 +147,41 @@ def remove_from_watchlist(name: str) -> tuple[bool, str]:
 
 
 # ==========================================
+# 모니터링 채널 관리 — data/channels.json
+# ==========================================
+CHANNELS_PATH = os.path.join(DATA_DIR, "channels.json")
+
+
+def load_channels() -> list[str]:
+    """channels.json에서 모니터링 채널 목록을 읽습니다.
+    파일이 없으면 환경변수 WATCH_CHANNELS 값으로 초기화합니다."""
+    if not os.path.exists(CHANNELS_PATH):
+        return list(WATCH_CHANNELS)
+    try:
+        with open(CHANNELS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def save_channels(channels: list[str]):
+    """모니터링 채널 목록을 channels.json에 저장합니다."""
+    with open(CHANNELS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(channels, f, ensure_ascii=False, indent=2)
+
+
+async def update_channel_handler(channels: list[str]):
+    """채널 목록 변경 시 user_client 이벤트 핸들러를 재등록합니다."""
+    user_client.remove_event_handler(on_channel_msg)
+    if channels:
+        user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=channels))
+        log.info("채널 핸들러 재등록: %s", channels)
+    else:
+        log.info("모니터링 채널 없음 — 핸들러 비활성화")
+
+
+# ==========================================
 # 관심종목 공시 감지 — 중복 방지용 수신 이력 관리
 # ==========================================
 SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
@@ -1159,6 +1194,45 @@ async def on_bot_msg(event):
         msg += f"\n총 {len(DART_ALERT_KEYWORDS)}개 키워드"
         await event.reply(msg)
 
+    # ── 모니터링 채널 관리 ─────────────────────────────────
+    elif text.startswith('/채널추가'):
+        ch = text.replace('/채널추가', '').strip()
+        if not ch:
+            return await event.reply("사용법: /채널추가 @채널유저네임")
+        if not ch.startswith('@'):
+            ch = '@' + ch
+        channels = load_channels()
+        if ch in channels:
+            return await event.reply(f"'{ch}'은(는) 이미 모니터링 중입니다.")
+        channels.append(ch)
+        save_channels(channels)
+        await update_channel_handler(channels)
+        await event.reply(f"✅ '{ch}' 모니터링 채널에 추가됐습니다. (총 {len(channels)}개)\n\n⚠️ user_client 계정이 해당 채널에 가입되어 있어야 합니다.")
+
+    elif text.startswith('/채널삭제'):
+        ch = text.replace('/채널삭제', '').strip()
+        if not ch:
+            return await event.reply("사용법: /채널삭제 @채널유저네임")
+        if not ch.startswith('@'):
+            ch = '@' + ch
+        channels = load_channels()
+        if ch not in channels:
+            return await event.reply(f"'{ch}'은(는) 모니터링 목록에 없습니다.")
+        channels.remove(ch)
+        save_channels(channels)
+        await update_channel_handler(channels)
+        await event.reply(f"🗑️ '{ch}' 모니터링 채널에서 삭제됐습니다. (총 {len(channels)}개)")
+
+    elif text == '/채널목록':
+        channels = load_channels()
+        if not channels:
+            return await event.reply("📡 모니터링 채널이 없습니다.\n\n/채널추가 @채널유저네임  →  추가")
+        msg = f"📡 **모니터링 채널 ({len(channels)}개)**\n\n"
+        for i, ch in enumerate(channels, 1):
+            msg += f"{i}. {ch}\n"
+        msg += "\n/채널추가 @유저네임  →  추가\n/채널삭제 @유저네임  →  삭제"
+        await event.reply(msg)
+
     elif text in ('/help', '/도움말'):
         msg = (
             "📖 **네모 봇 명령어 도움말**\n\n"
@@ -1176,6 +1250,10 @@ async def on_bot_msg(event):
             "  `/watchlist` — 관심종목 전체 목록\n"
             "  `/keywords` — DART 공시 알림 키워드 확인\n"
             "    ※ 평일 09:00~18:00 매 30분 자동 감지\n\n"
+            "📡 **채널 모니터링 관리**\n"
+            "  `/채널추가 @유저네임` — 모니터링 채널 추가\n"
+            "  `/채널삭제 @유저네임` — 모니터링 채널 삭제\n"
+            "  `/채널목록` — 현재 모니터링 중인 채널 목록\n\n"
             "📈 **시황 브리핑**\n"
             "  `/시황` — 미국 3대 지수·원자재·금리·BTC 시황 즉시 조회\n"
             "    ※ 매일 07:00 자동 발송\n\n"
@@ -1211,12 +1289,13 @@ async def main():
     await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
 
     # 클라이언트 연결 완료 후 채널 핸들러 등록
-    # (연결 전 등록 시 채널 엔티티 해석 실패 가능)
-    if WATCH_CHANNELS:
-        user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=WATCH_CHANNELS))
-        log.info("채널 모니터링 등록 완료: %s", WATCH_CHANNELS)
+    # channels.json 우선, 없으면 WATCH_CHANNELS 환경변수 사용
+    _init_channels = load_channels()
+    if _init_channels:
+        user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=_init_channels))
+        log.info("채널 모니터링 등록 완료: %s", _init_channels)
     else:
-        log.info("WATCH_CHANNELS 미설정 — 채널 자동 요약 비활성화")
+        log.info("모니터링 채널 미설정 — /채널추가 @유저네임 으로 추가하세요")
 
     # 스케줄러 설정 (목/금 정기 브리핑 + 모닝 시황 + 관심종목 DART 공시 감지)
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
