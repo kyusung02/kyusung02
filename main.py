@@ -1370,8 +1370,18 @@ async def main():
         4) 시작 알림 메시지 발송
         5) 두 클라이언트를 asyncio.gather 로 동시에 유지
     """
-    await user_client.start()
-    await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
+    # SQLite session 락: 이전 프로세스가 완전히 종료되기 전에 접근하면
+    # "database is locked" 발생 → 최대 5회, 2초 간격으로 재시도
+    for attempt in range(1, 6):
+        try:
+            await user_client.start()
+            await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
+            break
+        except Exception as exc:  # sqlite3.OperationalError 포함
+            if attempt == 5:
+                raise
+            log.warning("클라이언트 시작 실패 (%d/5): %s — 2초 후 재시도", attempt, exc)
+            await asyncio.sleep(2)
 
     # 클라이언트 연결 완료 후 채널 핸들러 등록
     # channels.json 우선, 없으면 WATCH_CHANNELS 환경변수 사용
