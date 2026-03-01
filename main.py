@@ -922,6 +922,7 @@ async def on_channel_msg(event):
     """
     chat = await event.get_chat()
     source_name = chat.title if hasattr(chat, 'title') else "정보 채널"
+    log.info("채널 메시지 수신: %s | 내용 앞 50자: %s", source_name, (event.text or "")[:50])
 
     urls = re.findall(r'https?://[^\s]+', event.text or "")
 
@@ -1004,10 +1005,7 @@ async def on_channel_msg(event):
             )
 
 
-if WATCH_CHANNELS:
-    user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=WATCH_CHANNELS))
-else:
-    log.info("WATCH_CHANNELS 미설정 — 채널 자동 요약 비활성화")
+# NOTE: 핸들러 등록은 user_client.start() 이후 main() 안에서 수행됩니다.
 
 
 @bot_client.on(events.NewMessage())
@@ -1211,6 +1209,14 @@ async def main():
     """
     await user_client.start()
     await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
+
+    # 클라이언트 연결 완료 후 채널 핸들러 등록
+    # (연결 전 등록 시 채널 엔티티 해석 실패 가능)
+    if WATCH_CHANNELS:
+        user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=WATCH_CHANNELS))
+        log.info("채널 모니터링 등록 완료: %s", WATCH_CHANNELS)
+    else:
+        log.info("WATCH_CHANNELS 미설정 — 채널 자동 요약 비활성화")
 
     # 스케줄러 설정 (목/금 정기 브리핑 + 모닝 시황 + 관심종목 DART 공시 감지)
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
