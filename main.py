@@ -56,6 +56,7 @@ import json
 import pandas as pd
 from datetime import datetime, date
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import MessageMediaDocument
 import urllib.request
 import urllib.parse
@@ -98,6 +99,7 @@ from config import (
     MY_TELEGRAM_ID, GEMINI_API_KEY, WATCH_CHANNELS,
     DOWNLOAD_DIR, DART_API_KEY, CHARTS_DIR, DATA_DIR,
     DART_ALERT_KEYWORDS,
+    TELEGRAM_USER_SESSION, TELEGRAM_BOT_SESSION,
 )
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -776,8 +778,12 @@ def fetch_webpage_text(url):
 # ==========================================
 # user_client : 일반 사용자 계정으로 채널 메시지를 수신(모니터링)
 # bot_client  : 봇 토큰으로 인증해 나에게 메시지를 발송
-user_client = TelegramClient("user_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
-bot_client = TelegramClient("bot_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
+# StringSession이 .env에 설정돼 있으면 파일 락 없는 메모리 세션 사용,
+# 없으면 기존 SQLite 파일 세션으로 폴백 (gen_session.py 로 생성 가능)
+_user_session = StringSession(TELEGRAM_USER_SESSION) if TELEGRAM_USER_SESSION else "user_session"
+_bot_session  = StringSession(TELEGRAM_BOT_SESSION)  if TELEGRAM_BOT_SESSION  else "bot_session"
+user_client = TelegramClient(_user_session, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+bot_client  = TelegramClient(_bot_session,  TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
 
 async def send_weekly_info(mode):
