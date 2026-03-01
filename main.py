@@ -152,15 +152,25 @@ def remove_from_watchlist(name: str) -> tuple[bool, str]:
 CHANNELS_PATH = os.path.join(DATA_DIR, "channels.json")
 
 
-def load_channels() -> list[str]:
+def _parse_channel(ch):
+    """채널 식별자를 Telethon이 인식할 수 있는 형태로 변환합니다.
+    숫자로만 이루어진 문자열(또는 - 포함 숫자)은 int로 변환합니다."""
+    s = str(ch).strip()
+    try:
+        return int(s)
+    except ValueError:
+        return s
+
+
+def load_channels() -> list:
     """channels.json에서 모니터링 채널 목록을 읽습니다.
     파일이 없으면 환경변수 WATCH_CHANNELS 값으로 초기화합니다."""
     if not os.path.exists(CHANNELS_PATH):
-        return list(WATCH_CHANNELS)
+        return [_parse_channel(ch) for ch in WATCH_CHANNELS]
     try:
         with open(CHANNELS_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
+        return [_parse_channel(ch) for ch in data] if isinstance(data, list) else []
     except (json.JSONDecodeError, IOError):
         return []
 
