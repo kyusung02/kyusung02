@@ -60,6 +60,7 @@ from telethon.sessions import StringSession
 from telethon.tl.types import MessageMediaDocument
 import urllib.request
 import urllib.parse
+import uuid
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1418,6 +1419,14 @@ async def on_channel_msg(event):
             )
             return
 
+        # 한글 파일명은 Gemini API ASCII 인코딩 오류 방지를 위해 UUID 이름으로 변경
+        try:
+            file_path.encode('ascii')
+        except UnicodeEncodeError:
+            safe_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.pdf")
+            os.rename(file_path, safe_path)
+            file_path = safe_path
+
         pdf_header = f"📡 출처 채널: {source_name}\n📌 원문: {caption}\n📎 파일명: {filename}"
         await bot_client.send_message(
             MY_TELEGRAM_ID,
@@ -1781,6 +1790,14 @@ async def on_bot_msg(event):
         if not file_path:
             await event.reply("⚠️ PDF 다운로드에 실패했습니다.")
             return
+
+        # 한글 파일명은 Gemini API ASCII 인코딩 오류 방지를 위해 UUID 이름으로 변경
+        try:
+            file_path.encode('ascii')
+        except UnicodeEncodeError:
+            safe_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.pdf")
+            os.rename(file_path, safe_path)
+            file_path = safe_path
 
         await event.reply("📄 **PDF 분석 중...**\n⏳ Gemini가 리포트를 읽고 있습니다...")
         loop = asyncio.get_running_loop()
