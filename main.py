@@ -61,6 +61,25 @@ from telethon.tl.types import MessageMediaDocument
 import urllib.request
 import urllib.parse
 import uuid
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """리다이렉트 URL에 한글 등 non-ASCII가 있을 때 percent-encode 후 추적"""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            newurl.encode('ascii')
+        except UnicodeEncodeError:
+            parsed = urllib.parse.urlsplit(newurl)
+            newurl = urllib.parse.urlunsplit((
+                parsed.scheme,
+                parsed.netloc,
+                urllib.parse.quote(parsed.path, safe='/'),
+                urllib.parse.quote(parsed.query, safe='=&+%'),
+                parsed.fragment,
+            ))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+_safe_opener = urllib.request.build_opener(_SafeRedirectHandler())
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -837,7 +856,7 @@ def _get_naver_research_sync(company: str) -> str:
         encoded = urllib.parse.quote(company)
         url = f"https://finance.naver.com/research/company_list.nhn?keyword={encoded}&x=0&y=0"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _safe_opener.open(req, timeout=10) as resp:
             html = resp.read().decode('euc-kr', errors='ignore')
         entries = re.findall(
             r'href="(/research/company_read\.nhn\?nid=\d+)"[^>]*>\s*([^<]{5,100})\s*</a>',
@@ -857,8 +876,6 @@ def _get_naver_research_sync(company: str) -> str:
             if count >= 5:
                 break
         return '\n'.join(lines) if count > 0 else "📄 **증권사 리포트**\n(최근 리포트 없음)"
-    except UnicodeEncodeError:
-        return "📄 **증권사 리포트**\n(네이버 금융 접속 오류 — 리다이렉트 인코딩 문제)"
     except Exception as e:
         return f"📄 **증권사 리포트**\n(조회 실패: {e})"
 
@@ -992,10 +1009,8 @@ def _draw_chart_investor_flow(stock_code: str, company: str, path: str):
             url = f"https://finance.naver.com/item/frgn.nhn?code={stock_code}&page={page}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             try:
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with _safe_opener.open(req, timeout=8) as resp:
                     html = resp.read().decode('euc-kr', errors='ignore')
-            except UnicodeEncodeError:
-                break  # 리다이렉트 인코딩 오류 → 차트 생략
             except Exception:
                 break
 
