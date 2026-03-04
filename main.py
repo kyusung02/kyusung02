@@ -389,7 +389,8 @@ def get_kr_ticker(company: str):
     if company in _KR_TICKER_FALLBACK:
         return _KR_TICKER_FALLBACK[company]
     try:
-        result = dart.find_corp(company)
+        corp_df = dart.corp_codes
+        result = corp_df[corp_df['corp_name'] == company]
         if result is None or result.empty:
             return None
         # KOSPI(Y) / KOSDAQ(K) 상장사 우선 선택
@@ -401,7 +402,7 @@ def get_kr_ticker(company: str):
         suffix = '.KS' if row.get('corp_cls') == 'Y' else '.KQ'
         return stock_code + suffix
     except Exception as e:
-        logger.warning(f"get_kr_ticker({company}) DART 조회 실패: {e}")
+        log.warning(f"get_kr_ticker({company}) DART 조회 실패: {e}")
         return None
 
 
@@ -737,7 +738,8 @@ def _get_corp_overview_sync(company: str, ticker: str) -> str:
     """DART + yfinance로 기업 개요 텍스트 생성 (동기 함수 - executor에서 실행)"""
     lines = ["🏢 **기업 개요**"]
     try:
-        result = dart.find_corp(company)
+        corp_df = dart.corp_codes
+        result = corp_df[corp_df['corp_name'] == company]
         if result is not None and not result.empty:
             listed = result[result['corp_cls'].isin(['Y', 'K'])]
             row = listed.iloc[0] if not listed.empty else result.iloc[0]
