@@ -368,8 +368,26 @@ US_STOCK_MAP = {
 # 주가 / 차트 유틸리티 함수
 # ==========================================
 
+# 주요 국내 종목 하드코딩 폴백 (DART API 실패 시)
+_KR_TICKER_FALLBACK = {
+    '삼성전자': '005930.KS', 'SK하이닉스': '000660.KS', 'LG에너지솔루션': '373220.KS',
+    '삼성바이오로직스': '207940.KS', '현대차': '005380.KS', '기아': '000270.KS',
+    'POSCO홀딩스': '005490.KS', '셀트리온': '068270.KS', '카카오': '035720.KS',
+    '네이버': '035420.KS', 'NAVER': '035420.KS', 'LG화학': '051910.KS',
+    '삼성SDI': '006400.KS', '현대모비스': '012330.KS', 'KB금융': '105560.KS',
+    '신한지주': '055550.KS', '하나금융지주': '086790.KS', '우리금융지주': '316140.KS',
+    'KT&G': '033780.KS', 'SK텔레콤': '017670.KS', 'KT': '030200.KS',
+    'LG전자': '066570.KS', '롯데케미칼': '011170.KS', '한국전력': '015760.KS',
+    '두산에너빌리티': '034020.KS', 'SK이노베이션': '096770.KS', 'GS칼텍스': '078930.KS',
+    '삼성물산': '028260.KS', '현대건설': '000720.KS', '에코프로비엠': '247540.KQ',
+    '에코프로': '086520.KQ', '카카오뱅크': '323410.KS', '크래프톤': '259960.KS',
+}
+
 def get_kr_ticker(company: str):
     """DART find_corp으로 종목명 → yfinance ticker (예: 005930.KS) 변환"""
+    # 하드코딩 폴백 먼저 확인
+    if company in _KR_TICKER_FALLBACK:
+        return _KR_TICKER_FALLBACK[company]
     try:
         result = dart.find_corp(company)
         if result is None or result.empty:
@@ -382,7 +400,8 @@ def get_kr_ticker(company: str):
             return None
         suffix = '.KS' if row.get('corp_cls') == 'Y' else '.KQ'
         return stock_code + suffix
-    except Exception:
+    except Exception as e:
+        logger.warning(f"get_kr_ticker({company}) DART 조회 실패: {e}")
         return None
 
 
