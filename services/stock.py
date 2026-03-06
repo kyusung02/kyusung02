@@ -70,8 +70,11 @@ def get_kr_ticker(company: str) -> str | None:
         result = corp_df[corp_df['corp_name'] == company]
         if result is None or result.empty:
             return None
-        listed = result[result['corp_cls'].isin(['Y', 'K'])]
-        row = listed.iloc[0] if not listed.empty else result.iloc[0]
+        if 'corp_cls' in result.columns:
+            listed = result[result['corp_cls'].isin(['Y', 'K'])]
+            row = listed.iloc[0] if not listed.empty else result.iloc[0]
+        else:
+            row = result.iloc[0]
         stock_code = str(row.get('stock_code', '')).strip()
         if not stock_code or stock_code == 'nan':
             return None
