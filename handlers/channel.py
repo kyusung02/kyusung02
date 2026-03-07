@@ -3,6 +3,7 @@
 """
 import os
 import re
+import time
 import uuid
 import logging
 import asyncio
@@ -15,6 +16,21 @@ from utils import extract_youtube_id, fetch_webpage_text
 from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger(__name__)
+
+
+def _gemini_generate(fn, max_retries=4, base_delay=5):
+    """503/429 오류 시 지수 백오프 재시도."""
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if attempt < max_retries - 1 and ('503' in msg or '429' in msg or 'UNAVAILABLE' in msg or 'quota' in msg.lower()):
+                delay = base_delay * (2 ** attempt)
+                log.warning(f"Gemini 일시 오류({e}), {delay}초 후 재시도 ({attempt+1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                raise
 
 
 async def update_channel_handler(channels: list):
@@ -59,12 +75,13 @@ async def on_channel_msg(event):
                     lambda: YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
                 )
                 transcript = ' '.join(s['text'] for s in segments)[:5000]
+                _tr = transcript
                 res = await loop.run_in_executor(
                     _executor,
-                    lambda: client.models.generate_content(
+                    lambda: _gemini_generate(lambda: client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=[LINK_PROMPT + f"\n내용: {transcript}"]
-                    )
+                        contents=[LINK_PROMPT + f"\n내용: {_tr}"]
+                    ))
                 )
                 await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{res.text}")
             except Exception as e:
@@ -85,10 +102,10 @@ async def on_channel_msg(event):
             _t = text
             res = await loop.run_in_executor(
                 _executor,
-                lambda: client.models.generate_content(
+                lambda: _gemini_generate(lambda: client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[LINK_PROMPT + f"\n내용: {_t}"]
-                )
+                ))
             )
             await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{res.text}")
         return
@@ -123,12 +140,13 @@ async def on_channel_msg(event):
             uploaded = await loop.run_in_executor(
                 _executor, lambda: client.files.upload(file=file_path)
             )
+            _up = uploaded
             response = await loop.run_in_executor(
                 _executor,
-                lambda: client.models.generate_content(
+                lambda: _gemini_generate(lambda: client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=[uploaded, PDF_PROMPT]
-                )
+                    contents=[_up, PDF_PROMPT]
+                ))
             )
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
