@@ -4,10 +4,13 @@ on:
   push:
     branches:
       - master
+      - 'claude/**'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ github.ref_name }}
 
     steps:
       - name: SSH 접속 후 배포
@@ -17,12 +20,15 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           port: 22
+          envs: DEPLOY_BRANCH
           script: |
             set -e
             cd ~/kyusung02
 
-            echo "=== git pull ==="
-            git pull origin master
+            echo "=== git fetch & checkout ==="
+            git fetch origin
+            git checkout $DEPLOY_BRANCH || git checkout -b $DEPLOY_BRANCH origin/$DEPLOY_BRANCH
+            git pull origin $DEPLOY_BRANCH
 
             echo "=== 봇 재시작 ==="
             if systemctl is-active --quiet kyusung02; then
