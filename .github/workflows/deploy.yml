@@ -1,4 +1,4 @@
-name: Deploy to VM
+name: Deploy to GCP
 
 on:
   push:
@@ -12,21 +12,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to VM via SSH
+      - name: SSH 접속 후 배포
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
+          host: ${{ secrets.GCP_HOST }}
+          username: ${{ secrets.GCP_USER }}
+          key: ${{ secrets.GCP_SSH_KEY }}
+          port: 22
           script: |
-            cd ${{ secrets.VM_PROJECT_PATH }}
-            git pull origin ${{ github.ref_name }}
-            pip install -r requirements.txt --quiet
+            set -e
+            cd ~/kyusung02
 
-            # 봇 서비스 재시작 (systemd 사용 시)
-            if systemctl is-active --quiet ${{ secrets.VM_SERVICE_NAME }}; then
-              sudo systemctl restart ${{ secrets.VM_SERVICE_NAME }}
-              echo "서비스 재시작 완료: ${{ secrets.VM_SERVICE_NAME }}"
+            echo "=== git pull ==="
+            git pull origin main
+
+            echo "=== 봇 재시작 ==="
+            if systemctl is-active --quiet kyusung02; then
+              sudo systemctl restart kyusung02
+              echo "kyusung02 서비스 재시작 완료"
+            elif systemctl is-active --quiet bot; then
+              sudo systemctl restart bot
+              echo "bot 서비스 재시작 완료"
             else
-              echo "서비스가 실행 중이 아닙니다. VM에서 수동 시작이 필요할 수 있습니다."
+              echo "ERROR: kyusung02 또는 bot 서비스를 찾을 수 없습니다"
+              exit 1
+            fi
+
+            echo "=== 서비스 상태 확인 ==="
+            sleep 3
+            if systemctl is-active --quiet kyusung02; then
+              systemctl status kyusung02 --no-pager -l | tail -20
+            else
+              systemctl status bot --no-pager -l | tail -20
             fi
