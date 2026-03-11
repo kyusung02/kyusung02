@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - master
-      - claude/add-explanation-PhILD
+      - 'claude/**'
 
 jobs:
   deploy:
