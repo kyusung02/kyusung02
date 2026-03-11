@@ -24,7 +24,7 @@ jobs:
             cd ~/kyusung02
 
             echo "=== git pull ==="
-            git pull origin main
+            git pull origin master
 
             echo "=== 봇 재시작 ==="
             if systemctl is-active --quiet kyusung02; then
