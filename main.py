@@ -53,6 +53,7 @@ from handlers.dart import (
     _get_dart_recent_filings_sync,
 )
 from handlers.market import send_us_morning
+from handlers.sector import send_kr_sector_briefing
 from handlers.report import handle_report
 from handlers.life import send_weekly_info
 from utils import extract_youtube_id, fetch_webpage_text
@@ -94,6 +95,11 @@ async def on_bot_msg(event):
     if text == '/시황':
         await event.reply("🌅 미국 시황 데이터 수집 중...")
         await send_us_morning()
+
+    # ── 섹터 브리핑 ──────────────────────────────────────────────────────────
+    elif text == '/섹터':
+        await event.respond("📊 섹터 데이터 수집 중... (약 20~30초 소요)")
+        await send_kr_sector_briefing()
 
     # ── 종합 리포트 ─────────────────────────────────────────────────────────
     elif text.startswith('/report') or text.startswith('/리포트'):
@@ -430,6 +436,10 @@ async def main():
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9,  args=['shop'])
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, args=['out'])
     scheduler.add_job(send_us_morning,  'cron', hour=7, minute=0)
+    scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=10, minute=0)
+    scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=12, minute=0)
+    scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=14, minute=0)
+    scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=16, minute=0)
     scheduler.add_job(
         check_dart_watchlist, 'cron',
         day_of_week='mon-fri', hour='9-18', minute='*/30',
@@ -443,6 +453,7 @@ async def main():
         "🔹 미국: /us NVDA, /us 엔비디아\n"
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
         "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
+        "🔹 섹터: /섹터 (평일 10/12/14/16시 자동 발송)\n"
         "🔹 생활: /장보기, /나들이\n\n"
         "📖 전체 명령어 보기: /help"
     )
