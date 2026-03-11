@@ -1,32 +1,5 @@
 """
 네모 봇 (Nemo Bot) — 텔레그램 올인원 자동화 봇
-=================================================
-기능 목록:
-  1. 채널 모니터링 & 자동 요약 (링크/유튜브/PDF)
-  2. 재무 데이터 분석 (/재무 <종목명>)
-  3. DART 공시 조회 (/공시 <종목명>)
-  4. 모닝 시황 브리핑 (/시황, 매일 07:00 자동)
-  5. 주간 생활 브리핑 (/장보기, /나들이)
-  6. 미국 주식 조회 (/us <종목명 또는 ticker>)
-  7. 관심종목 관리 + DART 공시 자동 감지
-
-모듈 구조:
-  clients.py          — Telethon 클라이언트, ThreadPoolExecutor
-  storage.py          — watchlist / channels / seen_filings JSON 관리
-  utils.py            — 웹 크롤링, YouTube ID 추출
-  services/gemini.py  — Gemini 클라이언트 & 프롬프트 상수
-  services/stock.py   — yfinance 주가 조회, DART 종목 코드 변환
-  services/chart.py   — 주가/실적/투자자 흐름 차트 생성
-  handlers/channel.py — 채널 메시지 자동 요약
-  handlers/dart.py    — DART 재무·공시·관심종목 감지
-  handlers/market.py  — 시황 브리핑
-  handlers/report.py  — 종합 리포트 (/report)
-  handlers/life.py    — 장보기·나들이 브리핑
-"""
-
-from dotenv import load_dotenv
-load_dotenv()
-
 import os
 import re
 import uuid
@@ -193,6 +166,7 @@ async def on_bot_msg(event):
             return await event.reply(f"❌ '{comp}'의 최근 공시가 없습니다.")
         msg = f"📑 **[{comp} 최근 주요 공시]**\n\n"
         for _, row in reports.head(3).iterrows():
+            # DART 공시 상세 링크를 접수번호(rcpNo)로 구성
             msg += f"▪️ {row['rcept_dt']} | [{row['report_nm']}](https://dart.fss.or.kr/dsaf001/main.do?rcpNo={row['rcept_no']})\n"
         await event.reply(msg, link_preview=False)
 
