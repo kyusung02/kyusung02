@@ -27,7 +27,9 @@ from handlers.dart import (
     _get_dart_recent_filings_sync,
 )
 from handlers.market import send_us_morning
-from handlers.sector import send_kr_sector_briefing
+from handlers.sector   import send_kr_sector_briefing
+from handlers.research import send_research_briefing
+from handlers.summarize import register as register_summarize
 from handlers.report import handle_report
 from handlers.life import send_weekly_info
 from utils import extract_youtube_id, fetch_webpage_text
@@ -286,98 +288,17 @@ async def on_bot_msg(event):
         )
         await event.reply(msg)
 
-    # ── 봇 채팅창: PDF 첨부 직접 분석 ────────────────────────────────────────
-    elif event.document and getattr(event.document, 'mime_type', '') == 'application/pdf':
-        file_path = await event.download_media(file=DOWNLOAD_DIR)
-        caption   = (text or '').strip() or '(제목 없음)'
-        filename  = os.path.basename(file_path) if file_path else '다운로드 실패'
 
-        if not file_path:
-            await event.reply("⚠️ PDF 다운로드에 실패했습니다.")
-            return
+@bot_client.on(events.NewMessage(pattern=r'^/섹터$'))
+async def cmd_sector(event):
+    await event.respond("📊 섹터 데이터 수집 중... (약 15~30초 소요)")
+    await send_kr_sector_briefing()
 
-        try:
-            file_path.encode('ascii')
-        except UnicodeEncodeError:
-            safe_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.pdf")
-            os.rename(file_path, safe_path)
-            file_path = safe_path
 
-        await event.reply("📄 **PDF 분석 중...**\n⏳ Gemini가 리포트를 읽고 있습니다...")
-        uploaded = None
-        try:
-            uploaded = await loop.run_in_executor(
-                _executor, lambda: gemini_client.files.upload(file=file_path)
-            )
-            response = await loop.run_in_executor(
-                _executor,
-                lambda: gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[uploaded, PDF_PROMPT]
-                )
-            )
-            await event.reply(
-                f"📊 **[PDF 리포트 분석]**\n_{caption}_\n\n{response.text}\n\n📎 파일명: {filename}"
-            )
-        except Exception as e:
-            await event.reply(f"⚠️ PDF 분석 중 오류 발생: {e}")
-        finally:
-            if uploaded:
-                try:
-                    await loop.run_in_executor(
-                        _executor, lambda: gemini_client.files.delete(name=uploaded.name)
-                    )
-                except Exception:
-                    pass
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-
-    # ── 봇 채팅창: URL 직접 요약 ─────────────────────────────────────────────
-    elif text and not text.startswith('/'):
-        urls = re.findall(r'https?://[^\s]+', text)
-        if not urls:
-            return
-        url = urls[0]
-
-        if re.search(r'(youtube\.com/watch|youtu\.be/)', url):
-            vid_id = extract_youtube_id(url)
-            if not vid_id:
-                return await event.reply("⚠️ YouTube 영상 ID를 인식할 수 없습니다.")
-            await event.reply("▶️ **유튜브 자막 추출 중...**")
-            try:
-                from youtube_transcript_api import YouTubeTranscriptApi
-                segments = await loop.run_in_executor(
-                    _executor,
-                    lambda: YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
-                )
-                transcript = ' '.join(s['text'] for s in segments)[:5000]
-                res = await loop.run_in_executor(
-                    _executor,
-                    lambda: gemini_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[LINK_PROMPT + f"\n내용: {transcript}"]
-                    )
-                )
-                await event.reply(f"▶️ **[유튜브 인사이트 요약]**\n\n{res.text}\n\n📎 원문: {url}")
-            except Exception as e:
-                await event.reply(f"⚠️ 자막을 가져올 수 없습니다: {e}\n📎 원문: {url}")
-        else:
-            await event.reply("🌐 **링크 분석 중...**")
-            page_text = await loop.run_in_executor(_executor, fetch_webpage_text, url)
-            if not page_text:
-                return await event.reply(f"⚠️ 해당 링크에서 내용을 가져오지 못했습니다.\n📎 {url}")
-            _pt = page_text
-            res = await loop.run_in_executor(
-                _executor,
-                lambda: gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[LINK_PROMPT + f"\n내용: {_pt}"]
-                )
-            )
-            await event.reply(f"🌐 **[네모 봇 인사이트 요약]**\n\n{res.text}\n\n📎 원문: {url}")
+@bot_client.on(events.NewMessage(pattern=r'^/리포트$'))
+async def cmd_research(event):
+    await event.respond("📋 오늘 증권사 리포트 수집 중... (약 15~30초 소요)")
+    await send_research_briefing()
 
 
 # ==========================================
@@ -417,10 +338,15 @@ async def main():
     scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=12, minute=0)
     scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=14, minute=0)
     scheduler.add_job(send_kr_sector_briefing, 'cron', day_of_week='mon-fri', hour=16, minute=0)
+    # 증권사 리포트 수집 (평일 8/9/10시)
+    scheduler.add_job(send_research_briefing, 'cron', day_of_week='mon-fri', hour=8,  minute=0)
+    scheduler.add_job(send_research_briefing, 'cron', day_of_week='mon-fri', hour=9,  minute=0)
+    scheduler.add_job(send_research_briefing, 'cron', day_of_week='mon-fri', hour=10, minute=0)
     scheduler.add_job(
         check_dart_watchlist, 'cron',
         day_of_week='mon-fri', hour='9-18', minute='*/30',
     )
+    register_summarize(bot_client)
     scheduler.start()
 
     await bot_client.send_message(MY_TELEGRAM_ID,
@@ -431,6 +357,8 @@ async def main():
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
         "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
         "🔹 섹터: /섹터 (평일 10/12/14/16시 자동 발송)\n"
+        "🔹 리포트: /리포트 (평일 08/09/10시 자동)\n"
+        "🔹 요약: PDF 전송 또는 /요약 [URL]\n"
         "🔹 생활: /장보기, /나들이\n\n"
         "📖 전체 명령어 보기: /help"
     )
