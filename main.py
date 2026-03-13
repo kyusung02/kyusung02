@@ -72,13 +72,8 @@ async def on_bot_msg(event):
         await event.reply("🌅 미국 시황 데이터 수집 중...")
         await send_us_morning()
 
-    # ── 섹터 브리핑 ──────────────────────────────────────────────────────────
-    elif text == '/섹터':
-        await event.respond("📊 섹터 데이터 수집 중... (약 20~30초 소요)")
-        await send_kr_sector_briefing()
-
     # ── 종합 리포트 ─────────────────────────────────────────────────────────
-    elif text.startswith('/report') or text.startswith('/리포트'):
+    elif text.startswith('/report') or (text.startswith('/리포트') and len(text) > len('/리포트')):
         comp = text.replace('/report', '').replace('/리포트', '').strip()
         if not comp:
             return await event.reply("사용법: /report 삼성전자")
