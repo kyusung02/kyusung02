@@ -1,16 +1,14 @@
 """
-채널 모니터링 핸들러 — 채널 메시지 자동 요약 (링크/유튜브/PDF)
+채널 모니터링 핸들러 — 채널 메시지 자동 요약 (링크/유튜브)
 """
-import os
 import re
 import time
-import uuid
 import logging
 import asyncio
 from telethon import events
 from clients import bot_client, user_client, _executor
-from config import MY_TELEGRAM_ID, DOWNLOAD_DIR
-from services.gemini import client, LINK_PROMPT, PDF_PROMPT
+from config import MY_TELEGRAM_ID
+from services.gemini import client, LINK_PROMPT
 from storage import load_channels, save_channels
 from utils import extract_youtube_id, fetch_webpage_text
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -49,7 +47,6 @@ async def on_channel_msg(event):
 
     [유튜브] YouTube URL 감지 → 자막 추출 → Gemini 요약 → 원문 링크 첨부
     [기사/블로그] 일반 URL 감지 → 웹 크롤링 → Gemini 요약 → 원문 링크 첨부
-    [PDF] 문서 첨부 감지 → 파일 다운로드 → Gemini Files API 업로드 → 리포트 분석 → 파일 삭제
     """
     chat = await event.get_chat()
     source_name = chat.title if hasattr(chat, 'title') else "정보 채널"
@@ -110,63 +107,3 @@ async def on_channel_msg(event):
             await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{res.text}")
         return
 
-    # ── PDF (문서 첨부) ───────────────────────────────────────────────────────
-    if event.document and getattr(event.document, 'mime_type', '') == 'application/pdf':
-        file_path = await event.download_media(file=DOWNLOAD_DIR)
-        caption   = (event.text or '').strip() or '(제목 없음)'
-        filename  = os.path.basename(file_path) if file_path else '다운로드 실패'
-
-        if not file_path:
-            await bot_client.send_message(
-                MY_TELEGRAM_ID,
-                f"📄 **[PDF 수신 실패]**\n{caption}\n\n⚠️ 파일 다운로드에 실패했습니다."
-            )
-            return
-
-        try:
-            file_path.encode('ascii')
-        except UnicodeEncodeError:
-            safe_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.pdf")
-            os.rename(file_path, safe_path)
-            file_path = safe_path
-
-        pdf_header = f"📡 출처 채널: {source_name}\n📌 원문: {caption}\n📎 파일명: {filename}"
-        await bot_client.send_message(
-            MY_TELEGRAM_ID,
-            f"📄 **[PDF 분석 중...]**\n{pdf_header}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
-        )
-        uploaded = None
-        try:
-            uploaded = await loop.run_in_executor(
-                _executor, lambda: client.files.upload(file=file_path)
-            )
-            _up = uploaded
-            response = await loop.run_in_executor(
-                _executor,
-                lambda: _gemini_generate(lambda: client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[_up, PDF_PROMPT]
-                ))
-            )
-            await bot_client.send_message(
-                MY_TELEGRAM_ID,
-                f"📊 **[PDF 리포트 분석]**\n{pdf_header}\n\n{response.text}"
-            )
-        except Exception as e:
-            await bot_client.send_message(
-                MY_TELEGRAM_ID,
-                f"📄 **[PDF 수신]**\n{pdf_header}\n\n⚠️ 분석 중 오류 발생: {e}"
-            )
-        finally:
-            if uploaded:
-                try:
-                    await loop.run_in_executor(
-                        _executor, lambda: client.files.delete(name=uploaded.name)
-                    )
-                except Exception:
-                    pass
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
