@@ -18,7 +18,7 @@ from storage import (
     load_watchlist, add_to_watchlist, remove_from_watchlist,
     load_channels, save_channels,
 )
-from services.gemini import client as gemini_client, LINK_PROMPT, PDF_PROMPT
+from services.gemini import client as gemini_client, LINK_PROMPT
 from services.stock import get_kr_ticker, get_us_report_text, get_price_info_kr, US_STOCK_MAP
 from services.chart import _draw_chart_kr, _draw_chart_us, _draw_chart_financials
 from handlers.channel import on_channel_msg, update_channel_handler
@@ -276,8 +276,7 @@ async def on_bot_msg(event):
             "━━━━━━━━━━━━━━━━━━\n"
             "🤖 **자동 기능**\n"
             "  • 모니터링 채널에 링크 포함 메시지 → AI 핵심 요약\n"
-            "  • YouTube 링크 → 자막 기반 요약\n"
-            "  • PDF 첨부 → 주식 리포트 자동 분석\n\n"
+            "  • YouTube 링크 → 자막 기반 요약\n\n"
             "📨 **봇에게 직접 보내기 / 요약**\n"
             "  • 기사/블로그 링크를 그냥 붙여넣기 → AI 요약\n"
             "  • YouTube 링크 → 자막 기반 요약\n"
