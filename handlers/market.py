@@ -7,7 +7,7 @@ from datetime import date
 import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
-from services.gemini import client
+from services.gemini import generate_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,8 @@ def _fetch_us_morning_data() -> str:
             else:
                 lines.append(f"{name}: {cur:,.2f}  {arrow} {sign}{pct:.1f}%")
         except Exception as e:
-            lines.append(f"{name}: 조회 실패 ({e})")
+            log.warning("yfinance(%s) 조회 실패: %s", sym, e)
+            lines.append(f"{name}: 조회 실패")
 
     return '\n'.join(lines)
 
@@ -81,10 +82,14 @@ async def send_us_morning():
         f"3줄 이내로 각 섹션을 간결하게 서술하세요."
     )
 
-    response = await loop.run_in_executor(
-        _executor,
-        lambda: client.models.generate_content(model='gemini-2.5-flash', contents=[prompt])
-    )
+    try:
+        response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
+    except Exception as e:
+        log.warning("Gemini 시황 요약 실패: %s", e)
+        await bot_client.send_message(MY_TELEGRAM_ID,
+            f"⚠️ 시황 분석 중 오류가 발생했습니다.\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
+        )
+        return
 
     raw_data_block = f"\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
     await bot_client.send_message(MY_TELEGRAM_ID, response.text + raw_data_block)

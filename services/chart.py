@@ -11,10 +11,30 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 import yfinance as yf
-from services.stock import US_STOCK_MAP
+from services.stock import US_STOCK_MAP, is_korean_ticker
 from utils import safe_opener
 
 log = logging.getLogger(__name__)
+
+
+def find_row(df: pd.DataFrame, candidates: list[str]):
+    """yfinance income_stmt에서 후보 라벨 중 첫 매칭 row 반환."""
+    for name in candidates:
+        if name in df.index:
+            return df.loc[name]
+    return None
+
+
+def quarter_label(dt) -> str:
+    """datetime → 'YYYYQn' 분기 라벨."""
+    return f"{dt.year}Q{(dt.month - 1) // 3 + 1}"
+
+
+def financial_unit(ticker: str) -> tuple[float, str]:
+    """ticker별 금액 단위 변환계수와 표시 라벨."""
+    if is_korean_ticker(ticker):
+        return 1e12, '조원'
+    return 1e9, 'B$'
 
 
 def _draw_chart_kr(ticker: str, company: str, path_daily: str, path_weekly: str):
@@ -133,28 +153,15 @@ def _draw_chart_financials(ticker_sym: str, company: str, path: str):
 
         df = df.sort_index(axis=1).iloc[:, -8:]
 
-        def _find_row(candidates):
-            for name in candidates:
-                if name in df.index:
-                    return df.loc[name]
-            return None
-
-        rev = _find_row(['Total Revenue', 'Revenue'])
-        oi  = _find_row(['Operating Income', 'EBIT', 'Operating Income Loss'])
-        ni  = _find_row(['Net Income', 'Net Income Common Stockholders'])
+        rev = find_row(df, ['Total Revenue', 'Revenue'])
+        oi  = find_row(df, ['Operating Income', 'EBIT', 'Operating Income Loss'])
+        ni  = find_row(df, ['Net Income', 'Net Income Common Stockholders'])
 
         if rev is None:
             return
 
-        is_krw = ticker_sym.endswith('.KS') or ticker_sym.endswith('.KQ')
-        unit   = 1e12 if is_krw else 1e9
-        ulabel = '조원' if is_krw else 'B $'
-
-        def _quarter_label(dt):
-            q = (dt.month - 1) // 3 + 1
-            return f"{dt.year}Q{q}"
-
-        labels = [_quarter_label(c) for c in df.columns]
+        unit, ulabel = financial_unit(ticker_sym)
+        labels = [quarter_label(c) for c in df.columns]
 
         def _ttm(series):
             if series is None:
@@ -222,25 +229,13 @@ def _draw_report_financials(ticker: str, company: str, path_pnl: str, path_ttm_r
             return
         df = df.sort_index(axis=1).iloc[:, -8:]
 
-        def _find_row(candidates):
-            for name in candidates:
-                if name in df.index:
-                    return df.loc[name]
-            return None
-
-        rev = _find_row(['Total Revenue', 'Revenue'])
-        oi  = _find_row(['Operating Income', 'EBIT', 'Operating Income Loss'])
+        rev = find_row(df, ['Total Revenue', 'Revenue'])
+        oi  = find_row(df, ['Operating Income', 'EBIT', 'Operating Income Loss'])
         if rev is None:
             return
 
-        is_krw = ticker.endswith('.KS') or ticker.endswith('.KQ')
-        unit   = 1e12 if is_krw else 1e9
-        ulabel = '조원' if is_krw else 'B$'
-
-        def _ql(dt):
-            return f"{dt.year}Q{(dt.month - 1) // 3 + 1}"
-
-        labels   = [_ql(c) for c in df.columns]
+        unit, ulabel = financial_unit(ticker)
+        labels = [quarter_label(c) for c in df.columns]
         rev_vals = pd.to_numeric(rev, errors='coerce').fillna(0) / unit
         oi_vals  = pd.to_numeric(oi,  errors='coerce').fillna(0) / unit if oi is not None else None
 
@@ -325,7 +320,13 @@ def _draw_report_financials(ticker: str, company: str, path_pnl: str, path_ttm_r
 
 
 def _draw_chart_investor_flow(stock_code: str, company: str, path: str):
-    """외국인 누적 순매수 차트 저장 - 네이버 금융 크롤링 (동기 함수 - executor에서 실행)"""
+    """외국인 누적 순매수 차트 저장 - 네이버 금융 크롤링 (동기 함수 - executor에서 실행).
+
+    stock_code는 6자리 숫자만 허용 (URL 인젝션 방지).
+    """
+    if not re.fullmatch(r'\d{6}', stock_code or ''):
+        log.warning("_draw_chart_investor_flow: 잘못된 stock_code 형식 — %s", stock_code)
+        return
     try:
         all_dates: list = []
         all_net: list   = []
@@ -377,8 +378,10 @@ def _draw_chart_investor_flow(stock_code: str, company: str, path: str):
         for v in all_net:
             total += v
             cum.append(total)
-        base = cum[0]
-        cum  = [v - base for v in cum]
+        # 차트 시작점을 0으로 상대화 (이후 누적 등락의 절대값이 아닌 추세를 보여줌)
+        if cum:
+            base = cum[0]
+            cum  = [v - base for v in cum]
 
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(all_dates, cum, color='#d32f2f', linewidth=1.5, label='외국인 누적순매수')

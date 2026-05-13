@@ -1,6 +1,9 @@
-telethon
-google-genai
-apscheduler
-pandas
-opendartreader
-youtube-transcript-api
+# 코드에서 직접 사용하는 패키지만 명시. 추후 supply-chain 위험이 보이면 hash-pin으로 강화.
+telethon>=1.34,<2.0
+google-genai>=0.3,<2.0
+apscheduler>=3.10,<4.0
+pandas>=2.0,<3.0
+opendartreader>=0.2.4,<1.0
+youtube-transcript-api>=0.6,<1.0
+yfinance>=0.2,<1.0
+matplotlib>=3.7,<4.0

@@ -110,7 +110,7 @@ def _fetch_sector_data() -> dict:
             group_by="ticker",
         )
     except Exception as e:
-        log.error(f"yfinance 배치 다운로드 실패: {e}")
+        log.error("yfinance 배치 다운로드 실패: %s", e)
         return {}
 
     def _get_close(ticker: str):
@@ -213,5 +213,5 @@ async def send_kr_sector_briefing():
         await bot_client.send_message(MY_TELEGRAM_ID, _format_message(data), parse_mode="md")
         log.info("섹터 브리핑 전송 완료")
     except Exception as e:
-        log.error(f"섹터 브리핑 전송 실패: {e}")
-        await bot_client.send_message(MY_TELEGRAM_ID, f"⚠️ 섹터 브리핑 오류: {e}")
+        log.error("섹터 브리핑 전송 실패: %s", e)
+        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 섹터 브리핑 생성 중 오류가 발생했습니다.")
