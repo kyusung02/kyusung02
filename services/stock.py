@@ -61,8 +61,17 @@ _KR_TICKER_FALLBACK = {
 }
 
 
+def is_korean_ticker(ticker: str) -> bool:
+    """yfinance ticker가 KOSPI(.KS) 또는 KOSDAQ(.KQ)인지 판별."""
+    return bool(ticker) and (ticker.endswith('.KS') or ticker.endswith('.KQ'))
+
+
 def get_kr_ticker(company: str) -> str | None:
-    """DART find_corp으로 종목명 → yfinance ticker (예: 005930.KS) 변환"""
+    """DART find_corp으로 종목명 → yfinance ticker (예: 005930.KS) 변환.
+
+    corp_cls 매핑: Y=KOSPI(.KS), K=KOSDAQ(.KQ), N=코넥스(상장폐지 위험·미지원), E=기타.
+    상장 종목만 ticker 반환.
+    """
     if company in _KR_TICKER_FALLBACK:
         return _KR_TICKER_FALLBACK[company]
     try:
@@ -78,10 +87,16 @@ def get_kr_ticker(company: str) -> str | None:
         stock_code = str(row.get('stock_code', '')).strip()
         if not stock_code or stock_code == 'nan':
             return None
-        suffix = '.KS' if row.get('corp_cls') == 'Y' else '.KQ'
+        cls = str(row.get('corp_cls', '')).strip()
+        if cls == 'Y':
+            suffix = '.KS'
+        elif cls == 'K':
+            suffix = '.KQ'
+        else:
+            return None
         return stock_code + suffix
     except Exception as e:
-        log.warning(f"get_kr_ticker({company}) DART 조회 실패: {e}")
+        log.warning("get_kr_ticker(%s) DART 조회 실패: %s", company, e)
         return None
 
 
@@ -111,7 +126,8 @@ def get_price_info_kr(ticker: str, company: str) -> str:
             f"52주 고: {hi52:,.0f}원  |  저: {lo52:,.0f}원"
         )
     except Exception as e:
-        return f'(주가 조회 실패: {e})'
+        log.warning("get_price_info_kr(%s) 실패: %s", ticker, e)
+        return '(주가 조회 실패)'
 
 
 def get_us_report_text(query: str) -> str:
@@ -177,4 +193,5 @@ def get_us_report_text(query: str) -> str:
             f"{eps_lines}"
         )
     except Exception as e:
-        return f"⚠️ 오류가 발생했습니다: {e}"
+        log.warning("get_us_report_text(%s) 실패: %s", query, e)
+        return "⚠️ 미국 종목 조회 중 오류가 발생했습니다."

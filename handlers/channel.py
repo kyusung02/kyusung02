@@ -1,36 +1,19 @@
 """
-채널 모니터링 핸들러 — 채널 메시지 자동 요약 (링크/유튜브/PDF)
+채널 모니터링 핸들러 — 채널 메시지 자동 요약 (링크/유튜브/PDF).
 """
-import os
 import re
-import time
-import uuid
 import logging
 import asyncio
 from telethon import events
 from clients import bot_client, user_client, _executor
 from config import MY_TELEGRAM_ID, DOWNLOAD_DIR
-from services.gemini import client, LINK_PROMPT, PDF_PROMPT
-from storage import load_channels, save_channels
+from services.gemini import (
+    LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
+)
 from utils import extract_youtube_id, fetch_webpage_text
 from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger(__name__)
-
-
-def _gemini_generate(fn, max_retries=4, base_delay=5):
-    """503/429 오류 시 지수 백오프 재시도."""
-    for attempt in range(max_retries):
-        try:
-            return fn()
-        except Exception as e:
-            msg = str(e)
-            if attempt < max_retries - 1 and ('503' in msg or '429' in msg or 'UNAVAILABLE' in msg or 'quota' in msg.lower()):
-                delay = base_delay * (2 ** attempt)
-                log.warning(f"Gemini 일시 오류({e}), {delay}초 후 재시도 ({attempt+1}/{max_retries})")
-                time.sleep(delay)
-            else:
-                raise
 
 
 async def update_channel_handler(channels: list):
@@ -38,9 +21,16 @@ async def update_channel_handler(channels: list):
     user_client.remove_event_handler(on_channel_msg)
     if channels:
         user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=channels))
-        log.info("채널 핸들러 재등록: %s", channels)
+        log.info("채널 핸들러 재등록 (%d개 채널)", len(channels))
     else:
         log.info("모니터링 채널 없음 — 핸들러 비활성화")
+
+
+def _summarize_external(prompt_body: str) -> str:
+    """LINK_PROMPT + 외부 콘텐츠 구획 → Gemini 호출 (동기)."""
+    contents = [LINK_PROMPT + "\n\n" + _wrap_external(prompt_body)]
+    response = generate_with_retry(contents)
+    return response.text
 
 
 async def on_channel_msg(event):
@@ -53,7 +43,9 @@ async def on_channel_msg(event):
     """
     chat = await event.get_chat()
     source_name = chat.title if hasattr(chat, 'title') else "정보 채널"
-    log.info("채널 메시지 수신: %s | 내용 앞 50자: %s", source_name, (event.text or "")[:50])
+    # 메시지 본문은 민감정보 가능성 — INFO에 길이만 기록, 본문은 DEBUG 레벨
+    log.info("채널 메시지 수신: %s | 길이=%d", source_name, len(event.text or ""))
+    log.debug("채널 메시지 본문 앞 50자: %s", (event.text or "")[:50])
 
     urls = re.findall(r'https?://[^\s]+', event.text or "")
     original_text = (event.text or '').strip()
@@ -74,20 +66,14 @@ async def on_channel_msg(event):
                     _executor,
                     lambda: YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
                 )
-                transcript = ' '.join(s['text'] for s in segments)[:5000]
-                _tr = transcript
-                res = await loop.run_in_executor(
-                    _executor,
-                    lambda: _gemini_generate(lambda: client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[LINK_PROMPT + f"\n내용: {_tr}"]
-                    ))
-                )
-                await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{res.text}")
+                transcript = ' '.join(s['text'] for s in segments)
+                summary = await loop.run_in_executor(_executor, _summarize_external, transcript)
+                await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{summary}")
             except Exception as e:
+                log.warning("YouTube 자막/요약 실패 (%s): %s", yt_url, e)
                 await bot_client.send_message(
                     MY_TELEGRAM_ID,
-                    f"{source_header}\n\n⚠️ 자막을 가져올 수 없습니다: {e}"
+                    f"{source_header}\n\n⚠️ 자막을 가져올 수 없습니다."
                 )
         return
 
@@ -98,23 +84,27 @@ async def on_channel_msg(event):
             source_header += f"\n📌 원문: {caption_text[:200]}"
         source_header += f"\n🔗 링크: {urls[0]}"
         text = await loop.run_in_executor(_executor, fetch_webpage_text, urls[0])
-        if text:
-            _t = text
-            res = await loop.run_in_executor(
-                _executor,
-                lambda: _gemini_generate(lambda: client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[LINK_PROMPT + f"\n내용: {_t}"]
-                ))
+        if not text:
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"{source_header}\n\n⚠️ 해당 링크에서 내용을 가져오지 못했습니다."
             )
-            await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{res.text}")
+            return
+        try:
+            summary = await loop.run_in_executor(_executor, _summarize_external, text)
+            await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{summary}")
+        except Exception as e:
+            log.warning("URL 요약 실패 (%s): %s", urls[0], e)
+            await bot_client.send_message(
+                MY_TELEGRAM_ID,
+                f"{source_header}\n\n⚠️ 요약 중 오류가 발생했습니다."
+            )
         return
 
     # ── PDF (문서 첨부) ───────────────────────────────────────────────────────
     if event.document and getattr(event.document, 'mime_type', '') == 'application/pdf':
         file_path = await event.download_media(file=DOWNLOAD_DIR)
         caption   = (event.text or '').strip() or '(제목 없음)'
-        filename  = os.path.basename(file_path) if file_path else '다운로드 실패'
 
         if not file_path:
             await bot_client.send_message(
@@ -123,50 +113,21 @@ async def on_channel_msg(event):
             )
             return
 
-        try:
-            file_path.encode('ascii')
-        except UnicodeEncodeError:
-            safe_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.pdf")
-            os.rename(file_path, safe_path)
-            file_path = safe_path
-
-        pdf_header = f"📡 출처 채널: {source_name}\n📌 원문: {caption}\n📎 파일명: {filename}"
+        pdf_header = f"📡 출처 채널: {source_name}\n📌 원문: {caption}"
         await bot_client.send_message(
             MY_TELEGRAM_ID,
             f"📄 **[PDF 분석 중...]**\n{pdf_header}\n\n⏳ Gemini가 리포트를 읽고 있습니다..."
         )
-        uploaded = None
         try:
-            uploaded = await loop.run_in_executor(
-                _executor, lambda: client.files.upload(file=file_path)
-            )
-            _up = uploaded
-            response = await loop.run_in_executor(
-                _executor,
-                lambda: _gemini_generate(lambda: client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[_up, PDF_PROMPT]
-                ))
-            )
+            # analyze_pdf는 path traversal 검증 + 업로드/분석/정리를 한 번에 처리
+            answer = await analyze_pdf(file_path, _executor)
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📊 **[PDF 리포트 분석]**\n{pdf_header}\n\n{response.text}"
+                f"📊 **[PDF 리포트 분석]**\n{pdf_header}\n\n{answer}"
             )
         except Exception as e:
+            log.warning("PDF 분석 실패 (%s): %s", file_path, e)
             await bot_client.send_message(
                 MY_TELEGRAM_ID,
-                f"📄 **[PDF 수신]**\n{pdf_header}\n\n⚠️ 분석 중 오류 발생: {e}"
+                f"📄 **[PDF 수신]**\n{pdf_header}\n\n⚠️ 분석 중 오류가 발생했습니다."
             )
-        finally:
-            if uploaded:
-                try:
-                    await loop.run_in_executor(
-                        _executor, lambda: client.files.delete(name=uploaded.name)
-                    )
-                except Exception:
-                    pass
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass

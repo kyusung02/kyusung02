@@ -78,6 +78,8 @@ def save_channels(channels: list):
 
 
 # ── DART 공시 수신 이력 ───────────────────────────────────────────────────────
+# 슬라이싱이 "최신 _MAX_SEEN개만 보존"이 되려면 삽입 순서가 보존되어야 한다.
+# set은 순서를 보장하지 않으므로 set 슬라이싱은 비결정적 — list 기반으로 dedup한다.
 
 def load_seen_filings() -> set:
     if not os.path.exists(SEEN_FILINGS_PATH):
@@ -86,12 +88,17 @@ def load_seen_filings() -> set:
         with open(SEEN_FILINGS_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return set(data) if isinstance(data, list) else set()
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("seen_filings 로드 실패 — 빈 set 반환: %s", e)
         return set()
 
 
-def save_seen_filings(seen: set):
-    items = list(seen)
+def save_seen_filings(seen):
+    """seen이 list(삽입 순서) 또는 set(순서 없음). 가능하면 list로 전달할 것."""
+    if isinstance(seen, set):
+        items = list(seen)
+    else:
+        items = list(dict.fromkeys(seen))  # 삽입 순서 유지 dedup
     if len(items) > _MAX_SEEN:
         items = items[-_MAX_SEEN:]
     with open(SEEN_FILINGS_PATH, 'w', encoding='utf-8') as f:

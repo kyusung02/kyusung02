@@ -5,13 +5,17 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: SSH 접속 후 배포
-        uses: appleboy/ssh-action@v1.0.3
+        # mutable tag 대신 commit SHA로 핀(supply chain attack 방어). v1.0.3 = 029f5b4...
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
@@ -25,20 +29,25 @@ jobs:
             git pull origin master
 
             echo "=== 봇 재시작 ==="
-            if systemctl is-active --quiet kyusung02; then
+            if systemctl is-active --quiet nemo-bot; then
+              sudo systemctl restart nemo-bot
+              echo "nemo-bot 서비스 재시작 완료"
+            elif systemctl is-active --quiet kyusung02; then
               sudo systemctl restart kyusung02
               echo "kyusung02 서비스 재시작 완료"
             elif systemctl is-active --quiet bot; then
               sudo systemctl restart bot
               echo "bot 서비스 재시작 완료"
             else
-              echo "ERROR: kyusung02 또는 bot 서비스를 찾을 수 없습니다"
+              echo "ERROR: nemo-bot / kyusung02 / bot 서비스를 찾을 수 없습니다"
               exit 1
             fi
 
             echo "=== 서비스 상태 확인 ==="
             sleep 3
-            if systemctl is-active --quiet kyusung02; then
+            if systemctl is-active --quiet nemo-bot; then
+              systemctl status nemo-bot --no-pager -l | tail -20
+            elif systemctl is-active --quiet kyusung02; then
               systemctl status kyusung02 --no-pager -l | tail -20
             else
               systemctl status bot --no-pager -l | tail -20

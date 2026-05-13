@@ -54,8 +54,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # 발급: https://opendart.fss.or.kr → 로그인 → API 신청
 DART_API_KEY = os.environ.get("DART_API_KEY", "")
 
-# Anthropic Claude API 키 (향후 기능 확장용, 현재 미사용)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# ==========================================
+# Telethon StringSession (선택사항)
+# ==========================================
+# VM 등 비대화형 환경에서 .session 파일 대신 문자열 세션을 사용하려면 설정.
+# 비워두면 ./user_session.session / ./bot_session.session 파일을 사용.
+TELEGRAM_USER_SESSION = os.environ.get("TELEGRAM_USER_SESSION", "")
+TELEGRAM_BOT_SESSION  = os.environ.get("TELEGRAM_BOT_SESSION", "")
 
 # ==========================================
 # 채널 모니터링 설정
@@ -74,3 +79,22 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # PDF 등 첨부파일 임시 저장 경로 (Gemini 분석 후 자동 삭제)
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", os.path.join(BASE_DIR, "downloads"))
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# 차트 PNG 임시 저장 경로 (Telegram 전송 후 자동 삭제)
+CHARTS_DIR = os.environ.get("CHARTS_DIR", os.path.join(BASE_DIR, "charts"))
+os.makedirs(CHARTS_DIR, exist_ok=True)
+
+# 영속 데이터 (watchlist, channels, seen_filings) 저장 경로
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ==========================================
+# DART 공시 알림 키워드
+# ==========================================
+# 관심종목 공시 자동 감지 시 이 키워드가 제목에 포함되면 🚨 표시.
+DART_ALERT_KEYWORDS = [
+    '잠정실적', '연결실적', '영업실적', '매출액', '영업이익',
+    '시설투자', '내부자', '자기주식', '최대주주', '유상증자',
+    '무상증자', '합병', '분할', '전환사채', '교환사채',
+    '임원변동', '특수관계인', '주식매수선택권',
+]

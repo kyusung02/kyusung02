@@ -1,13 +1,35 @@
 """
-공통 유틸리티 — 웹 크롤링, YouTube ID 추출
+공통 유틸리티 — 웹 크롤링, YouTube ID 추출, 텔레그램 메시지 청크 분할
 """
 import re
+import ipaddress
+import socket
+import logging
 import urllib.request
 import urllib.parse
 
+log = logging.getLogger(__name__)
+
+MAX_TG_MESSAGE_LEN = 4096
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network('127.0.0.0/8'),
+    ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'),
+    ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('169.254.0.0/16'),
+    ipaddress.ip_network('0.0.0.0/8'),
+    ipaddress.ip_network('::1/128'),
+    ipaddress.ip_network('fc00::/7'),
+    ipaddress.ip_network('fe80::/10'),
+]
+
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """리다이렉트 URL에 한글 등 non-ASCII가 있을 때 percent-encode 후 추적"""
+    """리다이렉트 URL에 한글 등 non-ASCII가 있을 때 percent-encode 후 추적.
+
+    추가로 리다이렉트 대상 URL도 SSRF 검사를 통과해야 한다 — 그렇지 않으면 차단.
+    """
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
             newurl.encode('ascii')
@@ -20,22 +42,89 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
                 urllib.parse.quote(parsed.query, safe='=&+%'),
                 parsed.fragment,
             ))
+        if not is_url_safe(newurl):
+            raise urllib.error.HTTPError(newurl, 403, "Redirect to disallowed host", headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 safe_opener = urllib.request.build_opener(_SafeRedirectHandler())
 
 
+def _is_private_ip(ip: ipaddress._BaseAddress) -> bool:
+    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        return True
+    return any(ip in net for net in _PRIVATE_NETS)
+
+
+def is_url_safe(url: str) -> bool:
+    """SSRF 차단: scheme/host 검증 + DNS 해석한 모든 IP가 공개 대역인지 확인."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ('http', 'https'):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if _is_private_ip(ip):
+            return False
+    return True
+
+
+_YT_HOSTS = {'youtu.be', 'www.youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com'}
+_YT_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
+
+
 def extract_youtube_id(url: str) -> str | None:
-    match = re.search(r'(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
-    return match.group(1) if match else None
+    """YouTube 호스트인지 확인 후 11자리 영상 ID 추출. 비-YouTube URL은 None."""
+    if not url:
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return None
+    host = (parsed.hostname or '').lower()
+    if host not in _YT_HOSTS:
+        return None
+    if host.endswith('youtu.be'):
+        candidate = (parsed.path or '/').lstrip('/').split('/', 1)[0]
+        return candidate if _YT_ID.match(candidate) else None
+    qs = urllib.parse.parse_qs(parsed.query or '')
+    vid = (qs.get('v') or [None])[0]
+    if vid and _YT_ID.match(vid):
+        return vid
+    m = re.match(r'/(?:shorts|embed|live)/([A-Za-z0-9_-]{11})', parsed.path or '')
+    return m.group(1) if m else None
 
 
 def fetch_webpage_text(url: str) -> str | None:
+    """공개 URL의 본문 텍스트만 추출 — SSRF 가드 통과 후에만 fetch."""
+    if not is_url_safe(url):
+        log.warning("fetch_webpage_text: SSRF 가드로 차단된 URL — %s", url)
+        return None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with safe_opener.open(req, timeout=10) as response:
             html = response.read().decode("utf-8", errors="ignore")
         return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', html)).strip()[:5000]
-    except Exception:
+    except Exception as e:
+        log.debug("fetch_webpage_text 실패 (%s): %s", url, e)
         return None
+
+
+async def reply_chunked(event, text: str, chunk: int = MAX_TG_MESSAGE_LEN) -> None:
+    """Telegram 4096자 한도를 넘는 메시지를 분할 전송."""
+    if not text:
+        return
+    for i in range(0, len(text), chunk):
+        await event.reply(text[i:i + chunk])

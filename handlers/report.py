@@ -8,11 +8,14 @@ from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID, CHARTS_DIR
 from services.stock import get_kr_ticker, get_price_info_kr
 from services.chart import _draw_chart_kr, _draw_report_financials, _draw_chart_investor_flow
-from handlers.dart import (
-    _get_corp_overview_sync, _get_dart_recent_filings_sync,
-    _get_quarterly_financials_text_sync, _get_naver_research_sync,
-    _stock_code_from_ticker,
+from services.dart_service import (
+    stock_code_from_ticker,
+    get_corp_overview_sync,
+    get_dart_recent_filings_sync,
+    get_quarterly_financials_text_sync,
+    get_naver_research_sync,
 )
+from utils import reply_chunked
 
 log = logging.getLogger(__name__)
 
@@ -28,14 +31,14 @@ async def handle_report(event, company: str):
     if not ticker:
         return await event.reply(f"❌ '{company}' 종목을 찾을 수 없습니다.\n(DART 등록 종목명으로 검색해주세요)")
 
-    stock_code = _stock_code_from_ticker(ticker)
+    stock_code = stock_code_from_ticker(ticker)
 
     overview_text, price_text, filings_text, fin_text, research_text = await asyncio.gather(
-        loop.run_in_executor(_executor, _get_corp_overview_sync, company, ticker),
+        loop.run_in_executor(_executor, get_corp_overview_sync, company, ticker),
         loop.run_in_executor(_executor, get_price_info_kr, ticker, company),
-        loop.run_in_executor(_executor, _get_dart_recent_filings_sync, company),
-        loop.run_in_executor(_executor, _get_quarterly_financials_text_sync, ticker),
-        loop.run_in_executor(_executor, _get_naver_research_sync, company),
+        loop.run_in_executor(_executor, get_dart_recent_filings_sync, company),
+        loop.run_in_executor(_executor, get_quarterly_financials_text_sync, ticker),
+        loop.run_in_executor(_executor, get_naver_research_sync, company),
     )
 
     path_pnl      = os.path.join(CHARTS_DIR, f"{company}_pnl.png")
@@ -60,8 +63,7 @@ async def handle_report(event, company: str):
         f"{fin_text}{sep}"
         f"{research_text}"
     )
-    for i in range(0, len(full), 4096):
-        await event.reply(full[i:i + 4096])
+    await reply_chunked(event, full)
 
     chart_order = [path_pnl, path_ttm_rev, path_ttm_op, path_daily, path_weekly, path_investor]
     charts = [p for p in chart_order if os.path.exists(p)]
@@ -70,5 +72,5 @@ async def handle_report(event, company: str):
         for p in charts:
             try:
                 os.remove(p)
-            except Exception:
-                pass
+            except OSError as e:
+                log.debug("차트 파일 삭제 실패 %s: %s", p, e)
