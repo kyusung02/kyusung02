@@ -10,6 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import (
     TELEGRAM_BOT_TOKEN, MY_TELEGRAM_ID,
     DOWNLOAD_DIR, CHARTS_DIR, DART_ALERT_KEYWORDS,
+    CHANNEL_SUMMARY_ENABLED,
 )
 from clients import user_client, bot_client, _executor
 from storage import (
@@ -395,7 +396,7 @@ _HELP_TEXT = (
     "  `/watchlist` — 관심종목 전체 목록\n"
     "  `/keywords` — DART 공시 알림 키워드 확인\n"
     "    ※ 평일 09:00~18:00 매 30분 자동 감지\n\n"
-    "📡 **채널 모니터링 관리**\n"
+    "📡 **채널 모니터링 관리** _(현재 비활성)_\n"
     "  `/채널추가 @유저네임` — 모니터링 채널 추가\n"
     "  `/채널삭제 @유저네임` — 모니터링 채널 삭제\n"
     "  `/채널목록` — 현재 모니터링 중인 채널 목록\n\n"
@@ -410,7 +411,7 @@ _HELP_TEXT = (
     "    ※ 금 09:00 장보기 / 목 18:00 나들이 자동 전송\n\n"
     "━━━━━━━━━━━━━━━━━━\n"
     "🤖 **자동 기능**\n"
-    "  • 모니터링 채널에 링크 포함 메시지 → AI 핵심 요약\n"
+    "  • 모니터링 채널에 링크 포함 메시지 → AI 핵심 요약 _(현재 비활성)_\n"
     "  • YouTube 링크 → 자막 기반 요약\n"
     "  • PDF 첨부 → 주식 리포트 자동 분석\n\n"
     "📨 **봇에게 직접 보내기**\n"
@@ -451,12 +452,15 @@ async def main():
                         attempt, _START_RETRIES, exc, _START_RETRY_DELAY)
             await asyncio.sleep(_START_RETRY_DELAY)
 
-    init_channels = load_channels()
-    if init_channels:
-        user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=init_channels))
-        log.info("채널 모니터링 등록 완료 (%d개)", len(init_channels))
+    if CHANNEL_SUMMARY_ENABLED:
+        init_channels = load_channels()
+        if init_channels:
+            user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=init_channels))
+            log.info("채널 모니터링 등록 완료 (%d개)", len(init_channels))
+        else:
+            log.info("모니터링 채널 미설정 — /채널추가 @유저네임 으로 추가하세요")
     else:
-        log.info("모니터링 채널 미설정 — /채널추가 @유저네임 으로 추가하세요")
+        log.info("채널 요약 서비스 비활성 (CHANNEL_SUMMARY_ENABLED=true 로 활성화)")
 
     # 모든 스케줄 job 공통 옵션: 동시 실행 1건만, 누락된 트리거는 합쳐서 1회 실행, 5분 grace.
     job_defaults = {"max_instances": 1, "coalesce": True, "misfire_grace_time": 300}

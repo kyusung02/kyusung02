@@ -71,6 +71,12 @@ TELEGRAM_BOT_SESSION  = os.environ.get("TELEGRAM_BOT_SESSION", "")
 _watch_raw = os.environ.get("WATCH_CHANNELS", "")
 WATCH_CHANNELS = [ch.strip() for ch in _watch_raw.split(",") if ch.strip()]
 
+# 채널 요약 서비스 활성화 여부 (기본 비활성)
+# 비활성 시 user_client에 on_channel_msg 핸들러를 등록하지 않아
+# 모니터링 채널 메시지가 와도 요약 실행되지 않음. 코드/명령어는 그대로 유지.
+# 다시 켜려면: CHANNEL_SUMMARY_ENABLED=true
+CHANNEL_SUMMARY_ENABLED = os.environ.get("CHANNEL_SUMMARY_ENABLED", "false").lower() == "true"
+
 # ==========================================
 # 경로 설정
 # ==========================================
