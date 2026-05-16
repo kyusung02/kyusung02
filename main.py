@@ -59,7 +59,7 @@ from handlers.alerts import (
     check_and_notify_alerts,
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
-from handlers.earnings import handle_earnings
+from handlers.earnings import handle_earnings, check_and_notify_imminent_earnings
 from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -566,6 +566,12 @@ async def main():
 
     # 가격·이벤트 알림: 매 5분. 활성 알림 0개면 빈 list 반환되어 즉시 종료.
     scheduler.add_job(check_and_notify_alerts, 'interval', minutes=5)
+
+    # 어닝 임박(D-0/D-1) 푸시: 평일 08:30 KST. 보유+관심 미국 종목 한정.
+    scheduler.add_job(
+        check_and_notify_imminent_earnings, 'cron',
+        day_of_week='mon-fri', hour=8, minute=30,
+    )
 
     scheduler.start()
 

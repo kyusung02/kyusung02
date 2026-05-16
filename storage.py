@@ -12,8 +12,10 @@ WATCHLIST_PATH    = os.path.join(DATA_DIR, "watchlist.json")
 CHANNELS_PATH     = os.path.join(DATA_DIR, "channels.json")
 SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
 PORTFOLIO_PATH    = os.path.join(DATA_DIR, "portfolio.json")
-ALERTS_PATH       = os.path.join(DATA_DIR, "alerts.json")
+ALERTS_PATH         = os.path.join(DATA_DIR, "alerts.json")
+SEEN_EARNINGS_PATH  = os.path.join(DATA_DIR, "seen_earnings.json")
 _MAX_SEEN = 1000
+_MAX_SEEN_EARNINGS = 500
 
 
 def _parse_channel(ch):
@@ -171,6 +173,32 @@ def add_sell(ticker: str, shares: float | None = None) -> tuple[bool, str]:
         msg = f"➖ {name} {shares}주 매도 (잔여 {held['shares']}주)"
     save_portfolio(p)
     return True, msg
+
+
+# ── D-1 어닝 알림 발송 이력 (중복 방지) ─────────────────────────────────────
+# 키 = "{ticker}:{date}". 발송한 알림을 기록해 같은 날 반복 발송을 방지.
+
+def load_seen_earnings() -> set:
+    if not os.path.exists(SEEN_EARNINGS_PATH):
+        return set()
+    try:
+        with open(SEEN_EARNINGS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return set(data) if isinstance(data, list) else set()
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("seen_earnings 로드 실패: %s", e)
+        return set()
+
+
+def save_seen_earnings(seen):
+    if isinstance(seen, set):
+        items = list(seen)
+    else:
+        items = list(dict.fromkeys(seen))
+    if len(items) > _MAX_SEEN_EARNINGS:
+        items = items[-_MAX_SEEN_EARNINGS:]
+    with open(SEEN_EARNINGS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(items, f)
 
 
 # ── 가격/이벤트 알림 ──────────────────────────────────────────────────────────

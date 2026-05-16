@@ -155,6 +155,32 @@ def format_earnings_message(name: str, ticker: str, data: dict) -> str:
     return "\n".join(lines)
 
 
+def collect_imminent_earnings(tickers: list[str], days_window: int = 1) -> list[dict]:
+    """D-0 ~ D+days_window 사이 어닝 예정만 추출 (푸시 알림용)."""
+    today  = date.today()
+    cutoff = today + timedelta(days=days_window)
+    out: list[dict] = []
+
+    for tk in tickers:
+        data = get_earnings_history(tk, history_limit=0)
+        if not data:
+            continue
+        for u in data.get('upcoming', []):
+            try:
+                d = date.fromisoformat(u['date'])
+            except ValueError:
+                continue
+            if today <= d <= cutoff:
+                out.append({
+                    'ticker':     tk,
+                    'date':       u['date'],
+                    'eps_est':    u.get('eps_est'),
+                    'days_until': (d - today).days,
+                })
+    out.sort(key=lambda x: x['date'])
+    return out
+
+
 def format_upcoming_briefing(upcoming: list[dict], name_map: dict[str, str]) -> str:
     """모닝 시황 첨부용 — 1주 내 어닝 예정 요약."""
     if not upcoming:
