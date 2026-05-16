@@ -1,11 +1,32 @@
 """네모 봇 (Nemo Bot) — 텔레그램 올인원 자동화 봇"""
 import os
 import re
+import sys
 import asyncio
 import logging
 from datetime import date
 from telethon import events
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# Sentry 에러 트래킹. DSN 미설정 또는 패키지 미설치 시 조용히 비활성.
+# VM 측: pip install -r requirements.txt 후 .env 에 SENTRY_DSN=https://... 추가
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    if sentry_sdk:
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.environ.get("SENTRY_ENV", "production"),
+            traces_sample_rate=0.0,
+            send_default_pii=False,
+        )
+    else:
+        print("WARNING: SENTRY_DSN 설정됐으나 sentry-sdk 미설치 — pip install -r requirements.txt 실행 필요",
+              file=sys.stderr)
 
 from config import (
     TELEGRAM_BOT_TOKEN, MY_TELEGRAM_ID,

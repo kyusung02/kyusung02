@@ -28,6 +28,9 @@ jobs:
             echo "=== git pull ==="
             git pull origin master
 
+            echo "=== 의존성 동기화 ==="
+            pip3 install -r requirements.txt --user --quiet
+
             echo "=== 봇 재시작 ==="
             if systemctl is-active --quiet nemo-bot; then
               sudo systemctl restart nemo-bot
