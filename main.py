@@ -54,6 +54,9 @@ from handlers.report import handle_report
 from handlers.life import send_weekly_info
 from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
 # import handlers.portfolio 시점에 on_trade_callback 데코레이터가 bot_client 에 자동 등록됨.
+from handlers.alerts import (
+    handle_alert_add, handle_alert_list, handle_alert_remove, check_and_notify_alerts,
+)
 from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -144,6 +147,17 @@ async def on_bot_msg(event):
         return
     if text == '/portfolio' or text == '/포폴':
         await handle_portfolio(event)
+        return
+
+    # ── 가격·이벤트 알림 ────────────────────────────────────────────────────
+    if text.startswith('/alert ') or text == '/alert':
+        await handle_alert_add(event, text[len('/alert'):].strip())
+        return
+    if text == '/alerts':
+        await handle_alert_list(event)
+        return
+    if text.startswith('/unalert ') or text == '/unalert':
+        await handle_alert_remove(event, text[len('/unalert'):].strip())
         return
 
     # ── 관심종목 관리 ────────────────────────────────────────────────────────
@@ -440,6 +454,12 @@ _HELP_TEXT = (
     "  `/buy <종목> <수량> <단가> [날짜]` — 정형 매수 (재매수 시 평단가 가중평균)\n"
     "  `/sell <종목> [수량]` — 정형 매도 (수량 생략 시 전량)\n"
     "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n\n"
+    "🔔 **가격·이벤트 알림**\n"
+    "  `/alert <종목> above <가격> [메모]` — 가격 임계치 도달\n"
+    "  `/alert <종목> below <가격> [메모]`\n"
+    "  `/alert <종목> +5%` 또는 `-5%` — 전일 종가 대비 급등·급락\n"
+    "  `/alerts` — 활성 알림 목록  •  `/unalert <id>` — 삭제\n"
+    "    ※ 매 5분 자동 체크. 트리거 시 자동 삭제(1회성).\n\n"
     "📡 **채널 모니터링 관리** _(현재 비활성)_\n"
     "  `/채널추가 @유저네임` — 모니터링 채널 추가\n"
     "  `/채널삭제 @유저네임` — 모니터링 채널 삭제\n"
@@ -522,6 +542,10 @@ async def main():
         check_dart_watchlist, 'cron',
         day_of_week='mon-fri', hour='9-18', minute='*/30',
     )
+
+    # 가격·이벤트 알림: 매 5분. 활성 알림 0개면 빈 list 반환되어 즉시 종료.
+    scheduler.add_job(check_and_notify_alerts, 'interval', minutes=5)
+
     scheduler.start()
 
     await bot_client.send_message(MY_TELEGRAM_ID,

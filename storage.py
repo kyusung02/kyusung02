@@ -12,6 +12,7 @@ WATCHLIST_PATH    = os.path.join(DATA_DIR, "watchlist.json")
 CHANNELS_PATH     = os.path.join(DATA_DIR, "channels.json")
 SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
 PORTFOLIO_PATH    = os.path.join(DATA_DIR, "portfolio.json")
+ALERTS_PATH       = os.path.join(DATA_DIR, "alerts.json")
 _MAX_SEEN = 1000
 
 
@@ -170,6 +171,44 @@ def add_sell(ticker: str, shares: float | None = None) -> tuple[bool, str]:
         msg = f"➖ {name} {shares}주 매도 (잔여 {held['shares']}주)"
     save_portfolio(p)
     return True, msg
+
+
+# ── 가격/이벤트 알림 ──────────────────────────────────────────────────────────
+# 항목 = {id, ticker, name, market, type, value, note, created_at}
+# type: above | below | pct_up | pct_down
+# 트리거 시 1회성 — check_alerts 가 매칭 즉시 alerts.json 에서 제거.
+
+def load_alerts() -> list:
+    if not os.path.exists(ALERTS_PATH):
+        return []
+    try:
+        with open(ALERTS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("alerts 로드 실패 — 빈 list 반환: %s", e)
+        return []
+
+
+def save_alerts(alerts: list):
+    with open(ALERTS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(alerts, f, ensure_ascii=False, indent=2)
+
+
+def add_alert(alert: dict) -> tuple[bool, int]:
+    alerts = load_alerts()
+    alerts.append(alert)
+    save_alerts(alerts)
+    return True, len(alerts)
+
+
+def remove_alert_by_id(alert_id: str) -> tuple[bool, str]:
+    alerts = load_alerts()
+    new = [a for a in alerts if a.get('id') != alert_id]
+    if len(new) == len(alerts):
+        return False, "해당 알림 ID를 찾을 수 없습니다."
+    save_alerts(new)
+    return True, f"🗑️ 알림 삭제 (남은 {len(new)}개)"
 
 
 def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str | None, str, str]:
