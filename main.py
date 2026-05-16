@@ -59,6 +59,7 @@ from handlers.alerts import (
     check_and_notify_alerts,
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
+from handlers.earnings import handle_earnings
 from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -163,6 +164,14 @@ async def on_bot_msg(event):
         return
     if text.startswith('/unalert ') or text == '/unalert':
         await handle_alert_remove(event, text[len('/unalert'):].strip())
+        return
+
+    # ── 어닝 (실적 발표) ─────────────────────────────────────────────────────
+    if text.startswith('/earnings ') or text == '/earnings':
+        await handle_earnings(event, text[len('/earnings'):].strip())
+        return
+    if text.startswith('/어닝 ') or text == '/어닝':
+        await handle_earnings(event, text[len('/어닝'):].strip())
         return
 
     # ── 관심종목 관리 ────────────────────────────────────────────────────────
@@ -459,6 +468,10 @@ _HELP_TEXT = (
     "  `/buy <종목> <수량> <단가> [날짜]` — 정형 매수 (재매수 시 평단가 가중평균)\n"
     "  `/sell <종목> [수량]` — 정형 매도 (수량 생략 시 전량)\n"
     "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n\n"
+    "📅 **어닝 (실적 발표)**\n"
+    "  `/어닝 <종목>` 또는 `/earnings <종목>` — 어닝 히스토리(EPS 추정 vs 실제) + 다음 예정\n"
+    "    예) `/어닝 NVDA`, `/어닝 엔비디아`\n"
+    "    ※ 미국 종목 위주. 모닝 시황에 1주 내 보유·관심 종목 어닝 예정 자동 첨부.\n\n"
     "🔔 **가격·이벤트 알림**\n"
     "  `/알림 <자연어>` — 자연어로 등록 + 버튼 확인 (모든 타입 지원)\n"
     "    예) `/알림 삼성전자 9만원 넘으면`, `/알림 nvda 10% 빠지면 손절`,\n"

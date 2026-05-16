@@ -8,8 +8,10 @@ import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from services.gemini import generate_with_retry, build_morning_market_prompt
-from storage import load_portfolio
+from storage import load_portfolio, load_watchlist, resolve_ticker_input
 from services.portfolio import evaluate_portfolio, format_portfolio_message
+from services.stock import get_kr_ticker, US_STOCK_MAP
+from services.earnings import get_upcoming_earnings_for, format_upcoming_briefing
 
 log = logging.getLogger(__name__)
 
@@ -86,12 +88,42 @@ async def send_us_morning():
 
     # 포트폴리오 자동 평가 첨부 (보유 종목이 있을 때만)
     portfolio = load_portfolio()
-    if not portfolio:
-        return
-    try:
-        result = await loop.run_in_executor(_executor, evaluate_portfolio, portfolio)
-        await bot_client.send_message(
-            MY_TELEGRAM_ID, format_portfolio_message(result), parse_mode='md',
-        )
-    except Exception as e:
-        log.warning("모닝 포트폴리오 평가 실패: %s", e)
+    if portfolio:
+        try:
+            result = await loop.run_in_executor(_executor, evaluate_portfolio, portfolio)
+            await bot_client.send_message(
+                MY_TELEGRAM_ID, format_portfolio_message(result), parse_mode='md',
+            )
+        except Exception as e:
+            log.warning("모닝 포트폴리오 평가 실패: %s", e)
+
+    # 1주 내 어닝 예정 자동 첨부 (보유+관심 종목, 미국만 — yfinance 데이터 한계)
+    us_tickers, name_map = _collect_us_tickers_for_earnings(portfolio)
+    if us_tickers:
+        try:
+            upcoming = await loop.run_in_executor(_executor, get_upcoming_earnings_for, us_tickers, 7)
+            if upcoming:
+                msg = format_upcoming_briefing(upcoming, name_map)
+                await bot_client.send_message(MY_TELEGRAM_ID, msg, parse_mode='md')
+        except Exception as e:
+            log.warning("어닝 예정 조회 실패: %s", e)
+
+
+def _collect_us_tickers_for_earnings(portfolio: dict) -> tuple[list[str], dict[str, str]]:
+    """모닝 시황 첨부용 — 보유+관심 종목 중 미국만 추출.
+
+    국내 종목은 yfinance earnings_dates 가 거의 비어 있어 제외.
+    portfolio 는 이미 ticker 키. watchlist 는 종목명 → ticker 변환 필요.
+    """
+    name_map: dict[str, str] = {}
+
+    for tk, data in (portfolio or {}).items():
+        if data.get('market') == 'US':
+            name_map[tk] = data.get('name', tk)
+
+    for nm in load_watchlist():
+        tk, mk, disp = resolve_ticker_input(nm, get_kr_ticker, US_STOCK_MAP)
+        if tk and mk == 'US' and tk not in name_map:
+            name_map[tk] = disp
+
+    return list(name_map.keys()), name_map
