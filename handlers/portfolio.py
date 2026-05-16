@@ -194,10 +194,28 @@ async def handle_trade(event, args_text: str):
         )
         return
 
+    # 1차: Gemini가 직접 추출한 ticker 신뢰. 2차: 기존 dict 기반 fallback.
     name = parsed.get('name') or ''
-    ticker, market, display = resolve_ticker_input(name, get_kr_ticker, US_STOCK_MAP)
+    gemini_ticker = (parsed.get('ticker') or '').strip()
+    gemini_market = parsed.get('market')
+
+    if gemini_ticker:
+        ticker = gemini_ticker.upper() if gemini_market == 'US' else gemini_ticker
+        if gemini_market in ('KR', 'US'):
+            market = gemini_market
+        elif ticker.endswith('.KS') or ticker.endswith('.KQ'):
+            market = 'KR'
+        else:
+            market = 'US'
+        display = name or ticker
+    else:
+        ticker, market, display = resolve_ticker_input(name, get_kr_ticker, US_STOCK_MAP)
+
     if not ticker:
-        await notice.edit(f"❌ '{name}' 종목을 인식할 수 없습니다.")
+        await notice.edit(
+            f"❌ '{name}' 종목을 인식할 수 없습니다.\n"
+            "정형 명령(`/buy 종목 수량 단가`)으로 직접 ticker 를 지정해 주세요."
+        )
         return
 
     parsed.update({'ticker': ticker, 'market': market, 'display': display, '_ts': time.time()})

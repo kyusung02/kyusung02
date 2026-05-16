@@ -349,31 +349,47 @@ TRADE_PARSE_PROMPT = """다음 한국어 메시지를 주식 매매 의도로 �
 오직 JSON. 다른 텍스트, 코드 펜스(```), 설명 일절 없음.
 
 스키마:
-{"action":"buy"|"sell"|"unknown","name":문자열|null,"shares":숫자|null,"price":숫자|null,"trade_date":"YYYY-MM-DD"|null}
+{"action":"buy"|"sell"|"unknown","name":공식 회사명|null,"ticker":yfinance 티커|null,"market":"KR"|"US"|null,"shares":숫자|null,"price":숫자|null,"trade_date":"YYYY-MM-DD"|null}
 
-규칙:
+티커 규칙 (yfinance 형식):
+- KOSPI: 6자리 종목코드 + ".KS" (예: 005930.KS = 삼성전자, 373220.KS = LG에너지솔루션)
+- KOSDAQ: 6자리 종목코드 + ".KQ" (예: 247540.KQ = 에코프로비엠, 086520.KQ = 에코프로)
+- US: 영문 티커 (예: NVDA, AAPL, BRK-B)
+- 별칭/줄임말은 공식명으로 정규화하고 정확한 ticker 매핑:
+  "삼전"→"삼성전자"/005930.KS, "엔솔"→"LG에너지솔루션"/373220.KS,
+  "현차"→"현대차"/005380.KS, "포홀"→"POSCO홀딩스"/005490.KS,
+  "삼바"→"삼성바이오로직스"/207940.KS, "셀트"→"셀트리온"/068270.KS,
+  "엔비"·"엔비디아"→"NVIDIA"/NVDA, "테슬"→"Tesla"/TSLA
+
+기타 규칙:
 - 가격 단위: "8만원"=80000, "10만5천원"=105000, "$102"=102, "102달러"=102, "102.81불"=102.81
 - 수량 단위: "10주"=10, "다섯주"=5
 - 전량/전부/모두 매도 의도면 action="sell", shares=null
 - 날짜: "어제"·"오늘"·"12월 1일" 등 → YYYY-MM-DD (연도 미명시면 직전 가까운 해)
 - 매매 의도가 모호하거나 일반 대화면 action="unknown" (다른 필드 null)
-- name 은 원문에 등장한 그대로 (예: "삼전", "엔비디아", "NVDA")
+- 종목 ticker 가 명확하지 않으면 ticker=null 로 두고 name 만 채울 것 (추측 금지)
 
 예시:
 입력: 삼성전자 10주 8만원에 샀어
-출력: {"action":"buy","name":"삼성전자","shares":10,"price":80000,"trade_date":null}
+출력: {"action":"buy","name":"삼성전자","ticker":"005930.KS","market":"KR","shares":10,"price":80000,"trade_date":null}
 
 입력: 엔비디아 5주 102.81달러 12월 1일
-출력: {"action":"buy","name":"엔비디아","shares":5,"price":102.81,"trade_date":"2025-12-01"}
-
-입력: nvda 전량 정리
-출력: {"action":"sell","name":"nvda","shares":null,"price":null,"trade_date":null}
+출력: {"action":"buy","name":"NVIDIA","ticker":"NVDA","market":"US","shares":5,"price":102.81,"trade_date":"2025-12-01"}
 
 입력: 삼전 3주 팔았어
-출력: {"action":"sell","name":"삼전","shares":3,"price":null,"trade_date":null}
+출력: {"action":"sell","name":"삼성전자","ticker":"005930.KS","market":"KR","shares":3,"price":null,"trade_date":null}
+
+입력: 에코프로비엠 2주 매도
+출력: {"action":"sell","name":"에코프로비엠","ticker":"247540.KQ","market":"KR","shares":2,"price":null,"trade_date":null}
+
+입력: KX하이텍 1주 5천원
+출력: {"action":"buy","name":"KX하이텍","ticker":"092220.KQ","market":"KR","shares":1,"price":5000,"trade_date":null}
+
+입력: nvda 전량 정리
+출력: {"action":"sell","name":"NVIDIA","ticker":"NVDA","market":"US","shares":null,"price":null,"trade_date":null}
 
 입력: 삼성전자 좋아 보이네
-출력: {"action":"unknown","name":null,"shares":null,"price":null,"trade_date":null}"""
+출력: {"action":"unknown","name":null,"ticker":null,"market":null,"shares":null,"price":null,"trade_date":null}"""
 
 
 _JSON_FENCE_RE = re.compile(r'```(?:json)?\s*(.+?)\s*```', re.S)
