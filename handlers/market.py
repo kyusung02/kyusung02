@@ -7,7 +7,7 @@ from datetime import date
 import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
-from services.gemini import generate_with_retry
+from services.gemini import generate_with_retry, build_morning_market_prompt
 
 log = logging.getLogger(__name__)
 
@@ -65,22 +65,7 @@ async def send_us_morning():
     data_str = await loop.run_in_executor(_executor, _fetch_us_morning_data)
 
     today  = date.today().strftime('%Y년 %m월 %d일')
-    prompt = (
-        f"당신은 CFA 자격을 보유한 국내 대형 증권사 리서치센터 수석 애널리스트입니다.\n"
-        f"아래는 {today} 기준 글로벌 시장 주요 지표입니다.\n\n"
-        f"{data_str}\n\n"
-        f"아래 형식으로 간결하게 정리하세요.\n\n"
-        f"[🌅 모닝 시황 브리핑 - {today}]\n\n"
-        f"■ 미국 3대 지수 흐름\n"
-        f"- S&P500 / NASDAQ / DOW 등락 요약 및 전일 대비 의미\n\n"
-        f"■ 국내 시장 전망\n"
-        f"- KOSPI / KOSDAQ 오늘 시가 방향 예상 (미국 흐름 반영)\n\n"
-        f"■ 원자재 & 금리\n"
-        f"- 금, WTI, 미국 2Y/10Y 금리 동향 및 투자 시사점\n\n"
-        f"■ 리스크 & 기회\n"
-        f"- 오늘 주목할 매크로 변수 또는 이벤트 1~2가지\n\n"
-        f"3줄 이내로 각 섹션을 간결하게 서술하세요."
-    )
+    prompt = build_morning_market_prompt(data_str, today)
 
     try:
         response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])

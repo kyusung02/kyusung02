@@ -11,6 +11,9 @@ config.py
 # 다운로드 디렉토리
 downloads/
 
+# 로컬 참고자료 (PDF 등, 프롬프트 작업 참고용)
+refs/
+
 # Python 캐시
 __pycache__/
 *.py[cod]
