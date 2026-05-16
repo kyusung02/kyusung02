@@ -1,13 +1,19 @@
 """
-포트폴리오 핸들러 — /buy /sell /portfolio 명령.
+포트폴리오 핸들러 — /buy /sell /portfolio + /거래 (자연어 + inline button).
+
+정형 명령: /buy /sell /portfolio
+자유 입력: /거래 <자연어> → Gemini 파싱 → 확인 버튼 → 실행
 
 명령 파싱 → 종목 식별 → storage 위임 → 응답.
 평가는 services.portfolio.evaluate_portfolio 에 위임 (yfinance 호출 → executor).
 """
 import re
+import time
+import uuid
 import logging
 import asyncio
 from datetime import date
+from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from storage import (
@@ -15,6 +21,7 @@ from storage import (
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.portfolio import evaluate_portfolio, format_portfolio_message
+from services.gemini import parse_trade_intent
 
 log = logging.getLogger(__name__)
 
@@ -123,3 +130,135 @@ async def handle_portfolio(event):
         await event.reply("⚠️ 포트폴리오 평가 중 오류가 발생했습니다.")
         return
     await bot_client.send_message(MY_TELEGRAM_ID, format_portfolio_message(result), parse_mode='md')
+
+
+# ── 자연어 거래 (/거래) + Inline Button 확인 ──────────────────────────────────
+# 봇 메모리에만 보관 (재시작 시 사라짐, 5분 timeout). 영속화 불필요.
+
+_PENDING_TRADES: dict[str, dict] = {}
+_PENDING_TTL_SEC = 300
+
+
+def _cleanup_pending():
+    now = time.time()
+    expired = [k for k, v in _PENDING_TRADES.items() if now - v.get('_ts', 0) > _PENDING_TTL_SEC]
+    for k in expired:
+        _PENDING_TRADES.pop(k, None)
+
+
+def _format_pending_summary(p: dict) -> str:
+    action  = p['action']
+    display = p['display']
+    ticker  = p['ticker']
+    market  = p['market']
+    unit    = '$' if market == 'US' else '원'
+
+    head = f"📋 **매매 의도 확인**\n\n- 종목: **{display}** (`{ticker}`) [{market}]"
+
+    if action == 'buy':
+        shares = p['shares']
+        price  = p['price']
+        total  = shares * price
+        return (
+            f"{head}\n"
+            f"- 행위: **매수**\n"
+            f"- 수량: {shares}주\n"
+            f"- 단가: {price:,.2f}{unit}\n"
+            f"- 합계: {total:,.2f}{unit}\n"
+            f"- 매수일: {p['trade_date']}"
+        )
+    sold = '전량' if p.get('shares') is None else f"{p['shares']}주"
+    return f"{head}\n- 행위: **매도**\n- 수량: {sold}"
+
+
+async def handle_trade(event, args_text: str):
+    """`/거래 <자연어>` — Gemini 파싱 → 확인 버튼 노출."""
+    if not args_text:
+        await event.reply(
+            "사용법: `/거래 <자연어>`\n"
+            "예) `/거래 삼성전자 10주 8만원에 샀어`\n"
+            "     `/거래 엔비디아 5주 102.81달러 12월 1일`\n"
+            "     `/거래 삼전 3주 매도`\n"
+            "     `/거래 nvda 전량 정리`"
+        )
+        return
+
+    notice = await event.reply("🤖 의도 파악 중...")
+    loop = asyncio.get_running_loop()
+    parsed = await loop.run_in_executor(_executor, parse_trade_intent, args_text)
+
+    if not parsed:
+        await notice.edit(
+            "❌ 매매 의도를 파악하지 못했습니다.\n"
+            "더 명확하게 입력해주세요. 예) `/거래 삼성전자 10주 8만원에 매수`"
+        )
+        return
+
+    name = parsed.get('name') or ''
+    ticker, market, display = resolve_ticker_input(name, get_kr_ticker, US_STOCK_MAP)
+    if not ticker:
+        await notice.edit(f"❌ '{name}' 종목을 인식할 수 없습니다.")
+        return
+
+    parsed.update({'ticker': ticker, 'market': market, 'display': display, '_ts': time.time()})
+
+    if parsed['action'] == 'buy':
+        if not parsed.get('shares') or not parsed.get('price'):
+            await notice.edit("⚠️ 매수는 수량과 단가가 모두 필요합니다.")
+            return
+        parsed['trade_date'] = parsed.get('trade_date') or date.today().isoformat()
+
+    _cleanup_pending()
+    trade_id = uuid.uuid4().hex[:12]
+    _PENDING_TRADES[trade_id] = parsed
+
+    await notice.edit(
+        _format_pending_summary(parsed),
+        buttons=[[
+            Button.inline("✅ 실행", f"trade_confirm:{trade_id}".encode()),
+            Button.inline("❌ 취소", f"trade_cancel:{trade_id}".encode()),
+        ]],
+    )
+
+
+@bot_client.on(events.CallbackQuery(pattern=rb'^trade_(confirm|cancel):'))
+async def on_trade_callback(event):
+    """Inline button 콜백. 본인 계정만 응답."""
+    if event.sender_id != MY_TELEGRAM_ID:
+        await event.answer("권한 없음")
+        return
+
+    data = event.data.decode()
+    is_confirm = data.startswith('trade_confirm:')
+    trade_id = data.split(':', 1)[1]
+    pending = _PENDING_TRADES.pop(trade_id, None)
+
+    if pending is None:
+        await event.answer("⏰ 만료된 거래입니다", alert=True)
+        try:
+            await event.edit("⏰ 만료된 거래 (5분 timeout)")
+        except Exception as e:
+            log.debug("edit 실패: %s", e)
+        return
+
+    if not is_confirm:
+        await event.answer("취소됨")
+        try:
+            await event.edit("❌ 취소되었습니다.")
+        except Exception as e:
+            log.debug("edit 실패: %s", e)
+        return
+
+    if pending['action'] == 'buy':
+        ok, msg = add_buy(
+            pending['ticker'], pending['display'], pending['market'],
+            pending['shares'], pending['price'], pending['trade_date'],
+        )
+    else:
+        ok, msg = add_sell(pending['ticker'], pending.get('shares'))
+
+    await event.answer("실행 완료" if ok else "실패", alert=not ok)
+    try:
+        await event.edit(("✅ " if ok else "❌ ") + msg + "\n\n/portfolio  →  현황 보기")
+    except Exception as e:
+        log.debug("edit 실패: %s", e)

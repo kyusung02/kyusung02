@@ -52,7 +52,8 @@ from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
 from handlers.report import handle_report
 from handlers.life import send_weekly_info
-from handlers.portfolio import handle_buy, handle_sell, handle_portfolio
+from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
+# import handlers.portfolio 시점에 on_trade_callback 데코레이터가 bot_client 에 자동 등록됨.
 from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -131,7 +132,10 @@ async def on_bot_msg(event):
         return
 
     # ── 포트폴리오 (보유 종목) ──────────────────────────────────────────────
-    # /buy /sell 은 인자 토큰이 있어 startswith 로 분기. /portfolio 는 단독 명령.
+    # /거래 는 Gemini 파싱 + inline button 확인. /buy /sell 은 정형 명령.
+    if text.startswith('/거래 ') or text == '/거래':
+        await handle_trade(event, text[len('/거래'):].strip())
+        return
     if text.startswith('/buy ') or text == '/buy':
         await handle_buy(event, text[len('/buy'):].strip())
         return
@@ -431,9 +435,10 @@ _HELP_TEXT = (
     "  `/keywords` — DART 공시 알림 키워드 확인\n"
     "    ※ 평일 09:00~18:00 매 30분 자동 감지\n\n"
     "💼 **포트폴리오 (보유 종목)**\n"
-    "  `/buy <종목> <수량> <단가> [날짜]` — 매수 기록 (재매수 시 평단가 자동 가중평균)\n"
-    "    예) `/buy 삼성전자 10 80000`, `/buy NVDA 5 102.81 2025-12-01`\n"
-    "  `/sell <종목> [수량]` — 매도 (수량 생략 시 전량)\n"
+    "  `/거래 <자연어>` — 자연어로 매매 + 버튼 확인\n"
+    "    예) `/거래 삼성전자 10주 8만원에 샀어`, `/거래 nvda 전량 정리`\n"
+    "  `/buy <종목> <수량> <단가> [날짜]` — 정형 매수 (재매수 시 평단가 가중평균)\n"
+    "  `/sell <종목> [수량]` — 정형 매도 (수량 생략 시 전량)\n"
     "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n\n"
     "📡 **채널 모니터링 관리** _(현재 비활성)_\n"
     "  `/채널추가 @유저네임` — 모니터링 채널 추가\n"

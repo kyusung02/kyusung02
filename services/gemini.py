@@ -5,6 +5,8 @@ Gemini AI 클라이언트 + 프롬프트 중앙화 + 호출 헬퍼.
 계절·날짜처럼 호출 시점에 결정되는 컨텍스트는 builder 함수로 노출한다.
 """
 import os
+import re
+import json
 import time
 import uuid
 import asyncio
@@ -339,3 +341,56 @@ async def analyze_pdf(file_path: str, executor) -> str:
     """analyze_pdf_sync 의 async 래퍼."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, analyze_pdf_sync, file_path)
+
+
+# ── 매매 의도 파싱 ───────────────────────────────────────────────────────────
+
+TRADE_PARSE_PROMPT = """다음 한국어 메시지를 주식 매매 의도로 파싱해 JSON 한 줄로만 출력하세요.
+오직 JSON. 다른 텍스트, 코드 펜스(```), 설명 일절 없음.
+
+스키마:
+{"action":"buy"|"sell"|"unknown","name":문자열|null,"shares":숫자|null,"price":숫자|null,"trade_date":"YYYY-MM-DD"|null}
+
+규칙:
+- 가격 단위: "8만원"=80000, "10만5천원"=105000, "$102"=102, "102달러"=102, "102.81불"=102.81
+- 수량 단위: "10주"=10, "다섯주"=5
+- 전량/전부/모두 매도 의도면 action="sell", shares=null
+- 날짜: "어제"·"오늘"·"12월 1일" 등 → YYYY-MM-DD (연도 미명시면 직전 가까운 해)
+- 매매 의도가 모호하거나 일반 대화면 action="unknown" (다른 필드 null)
+- name 은 원문에 등장한 그대로 (예: "삼전", "엔비디아", "NVDA")
+
+예시:
+입력: 삼성전자 10주 8만원에 샀어
+출력: {"action":"buy","name":"삼성전자","shares":10,"price":80000,"trade_date":null}
+
+입력: 엔비디아 5주 102.81달러 12월 1일
+출력: {"action":"buy","name":"엔비디아","shares":5,"price":102.81,"trade_date":"2025-12-01"}
+
+입력: nvda 전량 정리
+출력: {"action":"sell","name":"nvda","shares":null,"price":null,"trade_date":null}
+
+입력: 삼전 3주 팔았어
+출력: {"action":"sell","name":"삼전","shares":3,"price":null,"trade_date":null}
+
+입력: 삼성전자 좋아 보이네
+출력: {"action":"unknown","name":null,"shares":null,"price":null,"trade_date":null}"""
+
+
+_JSON_FENCE_RE = re.compile(r'```(?:json)?\s*(.+?)\s*```', re.S)
+
+
+def parse_trade_intent(text: str) -> dict | None:
+    """자유 문장 → 매매 의도 dict. action != buy/sell 또는 파싱 실패 시 None."""
+    try:
+        response = generate_with_retry([TRADE_PARSE_PROMPT + f"\n\n입력: {text}\n출력:"])
+        raw = (response.text or '').strip()
+        m = _JSON_FENCE_RE.search(raw)
+        if m:
+            raw = m.group(1).strip()
+        parsed = json.loads(raw)
+    except Exception as e:
+        log.warning("trade intent 파싱 실패 (%s): %s", text[:80], e)
+        return None
+    if not isinstance(parsed, dict) or parsed.get('action') not in ('buy', 'sell'):
+        return None
+    return parsed
