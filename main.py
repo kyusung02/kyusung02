@@ -55,8 +55,10 @@ from handlers.life import send_weekly_info
 from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
 # import handlers.portfolio 시점에 on_trade_callback 데코레이터가 bot_client 에 자동 등록됨.
 from handlers.alerts import (
-    handle_alert_add, handle_alert_list, handle_alert_remove, check_and_notify_alerts,
+    handle_alert_add, handle_alert_list, handle_alert_remove, handle_alert_natural,
+    check_and_notify_alerts,
 )
+# on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
 from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -150,6 +152,9 @@ async def on_bot_msg(event):
         return
 
     # ── 가격·이벤트 알림 ────────────────────────────────────────────────────
+    if text.startswith('/알림 ') or text == '/알림':
+        await handle_alert_natural(event, text[len('/알림'):].strip())
+        return
     if text.startswith('/alert ') or text == '/alert':
         await handle_alert_add(event, text[len('/alert'):].strip())
         return
@@ -455,8 +460,11 @@ _HELP_TEXT = (
     "  `/sell <종목> [수량]` — 정형 매도 (수량 생략 시 전량)\n"
     "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n\n"
     "🔔 **가격·이벤트 알림**\n"
-    "  `/alert <종목> above <가격> [메모]` — 가격 임계치 도달\n"
-    "  `/alert <종목> below <가격> [메모]`\n"
+    "  `/알림 <자연어>` — 자연어로 등록 + 버튼 확인 (모든 타입 지원)\n"
+    "    예) `/알림 삼성전자 9만원 넘으면`, `/알림 nvda 10% 빠지면 손절`,\n"
+    "        `/알림 삼전 52주 신고가`, `/알림 카카오 거래량 5배 터지면`,\n"
+    "        `/알림 삼성전자 과매도`\n"
+    "  `/alert <종목> above|below <가격> [메모]` — 정형 가격 임계\n"
     "  `/alert <종목> +5%` 또는 `-5%` — 전일 종가 대비 급등·급락\n"
     "  `/alerts` — 활성 알림 목록  •  `/unalert <id>` — 삭제\n"
     "    ※ 매 5분 자동 체크. 트리거 시 자동 삭제(1회성).\n\n"

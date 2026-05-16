@@ -410,3 +410,78 @@ def parse_trade_intent(text: str) -> dict | None:
     if not isinstance(parsed, dict) or parsed.get('action') not in ('buy', 'sell'):
         return None
     return parsed
+
+
+# ── 알림 의도 파싱 ───────────────────────────────────────────────────────────
+
+ALERT_PARSE_PROMPT = """다음 한국어 메시지를 가격·이벤트 알림 등록 의도로 파싱해 JSON 한 줄로만 출력하세요.
+오직 JSON. 다른 텍스트, 코드 펜스(```), 설명 일절 없음.
+
+스키마:
+{"intent":"add"|"unknown","name":"공식 회사명","ticker":"yfinance 티커","market":"KR"|"US","type":알림 타입|null,"value":숫자|null,"note":"메모"|null}
+
+티커 규칙: KOSPI .KS / KOSDAQ .KQ / US 영문. 별칭 정규화(삼전→삼성전자, 엔솔→LG에너지솔루션, 엔비→NVIDIA 등).
+
+알림 타입:
+- above:        가격이 value 이상 도달 (value=원/달러 단위 가격)
+- below:        가격이 value 이하 도달
+- pct_up:       전일 종가 대비 +value% 이상 상승 (value=퍼센트)
+- pct_down:     전일 종가 대비 -value% 이하 하락
+- 52w_high:     52주 신고가 도달 (value=null)
+- 52w_low:      52주 신저가 도달 (value=null)
+- volume_spike: 20일 평균 거래량 대비 value배 (기본 3)
+- rsi_above:    RSI(14) > value (과매수, 기본 70)
+- rsi_below:    RSI(14) < value (과매도, 기본 30)
+
+값 정규화:
+- "9만원 넘으면/돌파/이상" → above, 90000
+- "9만원 떨어지면/이하/미만" → below, 90000
+- "5% 오르면/상승" → pct_up, 5
+- "5% 빠지면/하락" → pct_down, 5
+- "52주 신고가/신고치" → 52w_high, null
+- "52주 신저가/바닥" → 52w_low, null
+- "거래량 N배/폭증" (배수 미지정 시 3) → volume_spike, N
+- "과매수" → rsi_above, 70
+- "과매도" → rsi_below, 30
+- "RSI N 넘으면" → rsi_above, N
+
+매매 의도(샀어/팔았어 등)나 일반 대화면 intent="unknown".
+
+예시:
+입력: 삼성전자 9만원 넘으면 알려줘
+출력: {"intent":"add","name":"삼성전자","ticker":"005930.KS","market":"KR","type":"above","value":90000,"note":null}
+
+입력: 엔비디아 10% 빠지면 손절
+출력: {"intent":"add","name":"NVIDIA","ticker":"NVDA","market":"US","type":"pct_down","value":10,"note":"손절"}
+
+입력: 삼전 52주 신고가
+출력: {"intent":"add","name":"삼성전자","ticker":"005930.KS","market":"KR","type":"52w_high","value":null,"note":null}
+
+입력: nvda 거래량 5배 터지면
+출력: {"intent":"add","name":"NVIDIA","ticker":"NVDA","market":"US","type":"volume_spike","value":5,"note":null}
+
+입력: 삼성전자 과매도 진입하면
+출력: {"intent":"add","name":"삼성전자","ticker":"005930.KS","market":"KR","type":"rsi_below","value":30,"note":null}
+
+입력: 카카오 RSI 75 돌파
+출력: {"intent":"add","name":"카카오","ticker":"035720.KS","market":"KR","type":"rsi_above","value":75,"note":null}
+
+입력: 삼성전자 좋아 보이네
+출력: {"intent":"unknown","name":null,"ticker":null,"market":null,"type":null,"value":null,"note":null}"""
+
+
+def parse_alert_intent(text: str) -> dict | None:
+    """자유 문장 → 알림 의도 dict. intent != add 또는 파싱 실패 시 None."""
+    try:
+        response = generate_with_retry([ALERT_PARSE_PROMPT + f"\n\n입력: {text}\n출력:"])
+        raw = (response.text or '').strip()
+        m = _JSON_FENCE_RE.search(raw)
+        if m:
+            raw = m.group(1).strip()
+        parsed = json.loads(raw)
+    except Exception as e:
+        log.warning("alert intent 파싱 실패 (%s): %s", text[:80], e)
+        return None
+    if not isinstance(parsed, dict) or parsed.get('intent') != 'add':
+        return None
+    return parsed
