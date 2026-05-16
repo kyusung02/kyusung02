@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 WATCHLIST_PATH    = os.path.join(DATA_DIR, "watchlist.json")
 CHANNELS_PATH     = os.path.join(DATA_DIR, "channels.json")
 SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
+PORTFOLIO_PATH    = os.path.join(DATA_DIR, "portfolio.json")
 _MAX_SEEN = 1000
 
 
@@ -103,3 +104,91 @@ def save_seen_filings(seen):
         items = items[-_MAX_SEEN:]
     with open(SEEN_FILINGS_PATH, 'w', encoding='utf-8') as f:
         json.dump(items, f)
+
+
+# ── 포트폴리오 (보유 종목) ───────────────────────────────────────────────────
+# 키 = yfinance ticker (예: "005930.KS", "NVDA"). 값 = {name, market, shares, avg_price, first_buy, last_update}
+# 매수 시 가중평균 평단가 자동 계산. 매도는 보유 수량만 차감(평단가 유지).
+
+def load_portfolio() -> dict:
+    if not os.path.exists(PORTFOLIO_PATH):
+        return {}
+    try:
+        with open(PORTFOLIO_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("portfolio 로드 실패 — 빈 dict 반환: %s", e)
+        return {}
+
+
+def save_portfolio(portfolio: dict):
+    with open(PORTFOLIO_PATH, 'w', encoding='utf-8') as f:
+        json.dump(portfolio, f, ensure_ascii=False, indent=2)
+
+
+def add_buy(ticker: str, name: str, market: str, shares: float, price: float, trade_date: str) -> tuple[bool, str]:
+    """매수 추가. 기존 보유 시 가중평균으로 평단가 재계산."""
+    if shares <= 0 or price <= 0:
+        return False, "수량·가격은 0보다 커야 합니다."
+    p = load_portfolio()
+    if ticker in p:
+        old = p[ticker]
+        new_shares = old["shares"] + shares
+        new_avg    = (old["shares"] * old["avg_price"] + shares * price) / new_shares
+        p[ticker]["shares"]      = new_shares
+        p[ticker]["avg_price"]   = new_avg
+        p[ticker]["last_update"] = trade_date
+        msg = f"✅ {name} {shares}주 추가매수 (평단 {old['avg_price']:,.2f} → {new_avg:,.2f})"
+    else:
+        p[ticker] = {
+            "name":        name,
+            "market":      market,
+            "shares":      shares,
+            "avg_price":   price,
+            "first_buy":   trade_date,
+            "last_update": trade_date,
+        }
+        msg = f"✅ {name} 신규매수 {shares}주 @ {price:,.2f}"
+    save_portfolio(p)
+    return True, msg
+
+
+def add_sell(ticker: str, shares: float | None = None) -> tuple[bool, str]:
+    """매도 처리. shares=None이면 전량 매도. 평단가는 유지(부분 매도 시)."""
+    p = load_portfolio()
+    if ticker not in p:
+        return False, "보유 종목이 아닙니다."
+    held = p[ticker]
+    name = held["name"]
+    if shares is None or shares >= held["shares"]:
+        sold = held["shares"]
+        del p[ticker]
+        msg = f"🗑️ {name} 전량매도 ({sold}주)"
+    else:
+        held["shares"] -= shares
+        msg = f"➖ {name} {shares}주 매도 (잔여 {held['shares']}주)"
+    save_portfolio(p)
+    return True, msg
+
+
+def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str | None, str, str]:
+    """사용자가 입력한 종목명/티커 → (ticker, market, display_name).
+
+    1) 국내 종목명 (DART/폴백) → .KS/.KQ ticker
+    2) US_STOCK_MAP (한글·소문자 매핑) → US ticker
+    3) 영문 대문자/티커 직접 입력 → US ticker로 간주
+    실패 시 (None, '', '') 반환.
+    """
+    kr = get_kr_ticker_fn(name)
+    if kr:
+        return kr, "KR", name
+    nl = name.lower().replace(' ', '')
+    if nl in us_map:
+        ticker = us_map[nl]
+        return ticker, "US", ticker
+    if name in us_map:
+        return us_map[name], "US", us_map[name]
+    if name.replace('.', '').replace('-', '').isalpha() and name.isascii():
+        return name.upper(), "US", name.upper()
+    return None, "", ""
