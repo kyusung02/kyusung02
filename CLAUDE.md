@@ -19,6 +19,10 @@
 | 시간 | 기능 |
 |------|------|
 | 매일 07:00 | 모닝 시황 브리핑 (`send_us_morning`) |
+| 월 08:00 | 반도체 업황 스크리닝 (`send_semi_briefing`) |
+| 평일 08:30 | 어닝 D-0/D-1 푸시 (`check_and_notify_imminent_earnings`) |
 | 금 09:00 | 장보기 리스트 (`send_weekly_info('shop')`) |
 | 목 18:00 | 나들이 추천 (`send_weekly_info('out')`) |
 | 평일 09~18시 매 30분 | DART 공시 감지 (`check_dart_watchlist`) |
+| 평일 10/12/14/16시 :05 | 국내 섹터 브리핑 (`send_kr_sector_briefing`) |
+| 매 5분 | 가격·이벤트 알림 체크 (`check_and_notify_alerts`) |

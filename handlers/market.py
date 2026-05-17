@@ -30,6 +30,8 @@ def _fetch_us_morning_data() -> str:
         '미국 10Y': '^TNX',
         'VIX':      '^VIX',
         'BTC':      'BTC-USD',
+        '필라델피아 SOX': '^SOX',
+        '반도체 ETF SMH': 'SMH',
     }
 
     lines = []

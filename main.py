@@ -50,6 +50,7 @@ from handlers.channel import on_channel_msg, update_channel_handler
 from handlers.dart import check_dart_watchlist
 from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
+from handlers.semi import send_semi_briefing
 from handlers.report import handle_report
 from handlers.life import send_weekly_info
 from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
@@ -91,6 +92,12 @@ async def on_bot_msg(event):
     if text == '/섹터':
         await event.respond("📊 섹터 데이터 수집 중... (약 20~30초 소요)")
         await send_kr_sector_briefing()
+        return
+
+    # ── 반도체 업황 스크리닝 ────────────────────────────────────────────────
+    if text in ('/semi', '/반도체'):
+        await event.respond("🔬 반도체 업황 스크리닝 중... (약 20~30초 소요)")
+        await send_semi_briefing()
         return
 
     # ── 종합 리포트 ─────────────────────────────────────────────────────────
@@ -486,10 +493,12 @@ _HELP_TEXT = (
     "  `/채널삭제 @유저네임` — 모니터링 채널 삭제\n"
     "  `/채널목록` — 현재 모니터링 중인 채널 목록\n\n"
     "📈 **시황 브리핑**\n"
-    "  `/시황` — 미국 3대 지수·원자재·금리·BTC 시황 즉시 조회\n"
+    "  `/시황` — 미국 3대 지수·원자재·금리·BTC·SOX·SMH 시황 즉시 조회\n"
     "    ※ 매일 07:00 자동 발송\n"
     "  `/섹터` — 국내 섹터별 등락률·핵심 이슈 브리핑 즉시 조회\n"
-    "    ※ 평일 10/12/14/16시(:05) 자동 발송\n\n"
+    "    ※ 평일 10/12/14/16시(:05) 자동 발송\n"
+    "  `/semi` (또는 `/반도체`) — 반도체 업황 스크리닝 (한·미 메모리·장비·빅테크 CAPEX)\n"
+    "    ※ 매주 월 08:00 자동 발송\n\n"
     "🏠 **생활 브리핑**\n"
     "  `/장보기` — 주간 건강 식단 + 장보기 리스트\n"
     "  `/나들이` — 아이와 가기 좋은 나들이 장소 추천\n"
@@ -573,6 +582,13 @@ async def main():
         day_of_week='mon-fri', hour=8, minute=30,
     )
 
+    # 주간 반도체 업황 스크리닝: 월요일 08:00 KST. 주말 누적 흐름 + 한 주 시작 시점.
+    # 07:00 모닝, 08:30 어닝 사이 빈 슬롯 — 셋이 30분 간격으로 차곡.
+    scheduler.add_job(
+        send_semi_briefing, 'cron',
+        day_of_week='mon', hour=8, minute=0,
+    )
+
     scheduler.start()
 
     await bot_client.send_message(MY_TELEGRAM_ID,
@@ -583,6 +599,7 @@ async def main():
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
         "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
         "🔹 섹터: /섹터 (평일 10/12/14/16시 자동 발송)\n"
+        "🔹 반도체: /semi (월요일 08:00 자동 발송)\n"
         "🔹 생활: /장보기, /나들이\n\n"
         "📖 전체 명령어 보기: /help"
     )
