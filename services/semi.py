@@ -37,14 +37,25 @@ KR_EQUIP = [
     ("네오셈",       "253590.KQ"),
 ]
 
-# 미국 메모리 직접 노출 (마이크론) + 파운드리·팹리스 빅네임
+# 미국 메모리 직접 노출 (DRAM/NAND) — 영상의 메모리 본진 피어
 US_MEMORY_PEERS = [
-    ("Micron",   "MU"),     # 메모리 직접 비교 피어
-    ("TSMC",     "TSM"),    # 비메모리 탑티어 (PER 비교 기준)
-    ("NVIDIA",   "NVDA"),   # HBM 최대 수요처
+    ("Micron",   "MU"),      # DRAM + NAND
+    ("SanDisk",  "SNDK"),    # 2025-02 WDC 분사, NAND 순수 플레이
+    ("Kioxia",   "285A.T"),  # 일본 NAND, 2024-12 도쿄 상장 (데이터 빈약 가능)
+]
+
+# 미국 팹리스·파운드리 — TSMC는 PER 비교 기준점, NVIDIA는 HBM 최대 수요처
+US_FABLESS = [
+    ("TSMC",     "TSM"),
+    ("NVIDIA",   "NVDA"),
     ("Broadcom", "AVGO"),
     ("AMD",      "AMD"),
     ("ARM",      "ARM"),
+]
+
+# 스토리지·HDD — 영상에서 "메모리와 분리"로 분류됐지만 NAND 대체재로 추적
+US_STORAGE = [
+    ("Western Digital", "WDC"),
 ]
 
 # 반도체 장비 (자본 지출 사이클)
@@ -78,7 +89,9 @@ def _build_all_tickers():
     rows = []
     for name, tk in KR_MEMORY:        rows.append((name, tk, "KR 메모리"))
     for name, tk in KR_EQUIP:         rows.append((name, tk, "KR 장비/소재"))
-    for name, tk in US_MEMORY_PEERS:  rows.append((name, tk, "US 메모리·팹리스"))
+    for name, tk in US_MEMORY_PEERS:  rows.append((name, tk, "US 메모리 (DRAM/NAND)"))
+    for name, tk in US_FABLESS:       rows.append((name, tk, "US 팹리스·파운드리"))
+    for name, tk in US_STORAGE:       rows.append((name, tk, "US 스토리지/HDD"))
     for name, tk in US_EQUIP:         rows.append((name, tk, "US 장비"))
     for name, tk in BIGTECH_CAPEX:    rows.append((name, tk, "빅테크 CAPEX"))
     return rows
@@ -210,9 +223,9 @@ def build_semi_briefing_prompt(data_block: str, today_str: str) -> str:
 ■ 시장 모멘텀 (^SOX·SMH·SOXX 기준)
 - 1일/5일/20일 흐름의 강도와 방향 (3줄 이내)
 
-■ 메모리 본진 (한국 005930·000660 + Micron)
-- 일일 변동·5일 추세 차이 (수치 인용)
-- 한·미 메모리 디커플링 여부
+■ 메모리 본진 (한국 005930·000660 + Micron·SanDisk·Kioxia)
+- DRAM(005930·000660·MU) vs NAND 순수 플레이(SNDK·Kioxia) 흐름 차이
+- 한·미 메모리 디커플링 여부 (수치 인용)
 
 ■ 빅테크 CAPEX 시그널 (MSFT·GOOGL·META·AMZN)
 - 4사 주가 종합 흐름 — 메모리 수요 지속성 함의
