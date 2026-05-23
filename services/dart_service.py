@@ -4,7 +4,6 @@ DART/yfinance 데이터 페칭 — 동기 함수 (executor에서 실행). 모두
 import re
 import logging
 import urllib.request
-import urllib.parse
 from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
@@ -197,32 +196,66 @@ def get_quarterly_financials_text_sync(ticker: str) -> str:
 
 
 def get_naver_research_sync(company: str) -> str:
-    """네이버 금융 증권사 리포트 크롤링 최근 5건 (동기 함수)."""
+    """네이버 금융 증권사 리포트 페이지에서 종목명 일치 행 최대 5건.
+
+    네이버가 keyword 검색을 무력화해(2026년 확인) 전체 종목 분석 리스트를 받아
+    클라이언트단에서 종목명으로 필터링한다. 행 단위로 제목·증권사·날짜·PDF 링크를 함께 추출.
+    """
     try:
-        encoded = urllib.parse.quote(company)
-        url = f"https://finance.naver.com/research/company_list.nhn?keyword={encoded}&x=0&y=0"
+        url = "https://finance.naver.com/research/company_list.naver"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with safe_opener.open(req, timeout=10) as resp:
             html = resp.read().decode('euc-kr', errors='ignore')
-        entries = re.findall(
-            r'href="(/research/company_read\.nhn\?nid=\d+)"[^>]*>\s*([^<]{5,100})\s*</a>',
-            html,
-        )
-        if not entries:
-            return "📄 **증권사 리포트**\n(최근 리포트 없음)"
-        lines = ["📄 **증권사 리포트** (최근)"]
-        seen, count = set(), 0
-        for path, title in entries:
-            title = title.strip()
-            if title in seen or len(title) < 5:
+
+        rows = re.findall(r'<tr>(.*?)</tr>', html, flags=re.DOTALL)
+        target = company.strip()
+        lines, seen, count = ["📄 **증권사 리포트** (최근)"], set(), 0
+
+        for row in rows:
+            sm = re.search(r'class="stock_item"[^>]*>([^<]+)</a>', row)
+            if not sm:
+                continue
+            stock_name = sm.group(1).strip()
+            if stock_name != target and target not in stock_name:
+                continue
+
+            tm = re.search(r'<a href="(company_read\.naver\?nid=\d+[^"]*)"[^>]*>([^<]+)</a>', row)
+            if not tm:
+                continue
+            title = tm.group(2).strip()
+            if title in seen or len(title) < 3:
                 continue
             seen.add(title)
-            # 네이버에서 가져온 title이 Telegram 마크다운 특수문자를 포함할 수 있으므로 이스케이프
-            lines.append(f"• [{_escape_md(title)}](https://finance.naver.com{path})")
+
+            read_url = "https://finance.naver.com/research/" + tm.group(1).replace('&amp;', '&')
+
+            # 제목 td 직후의 첫 plain <td>...</td> = 증권사명
+            broker = ""
+            bm = re.search(r'</td>\s*<td>([^<]+)</td>', row[tm.end():])
+            if bm:
+                broker = bm.group(1).strip()
+
+            # PDF 직접 링크가 있으면 우선(없으면 read 페이지로 fallback)
+            pm = re.search(r'class="file"[^>]*>\s*<a href="(https://stock\.pstatic\.net/[^"]+\.pdf)"', row)
+            link = pm.group(1) if pm else read_url
+
+            dm = re.search(r'class="date"[^>]*>([\d.]+)</td>', row)
+            d_str = dm.group(1).strip() if dm else ""
+
+            entry = f"• [{_escape_md(title)}]({link})"
+            if broker:
+                entry += f" — {_escape_md(broker)}"
+            if d_str:
+                entry += f" ({d_str})"
+            lines.append(entry)
+
             count += 1
             if count >= 5:
                 break
-        return '\n'.join(lines) if count > 0 else "📄 **증권사 리포트**\n(최근 리포트 없음)"
+
+        if count == 0:
+            return "📄 **증권사 리포트**\n(최근 리포트 없음)"
+        return '\n'.join(lines)
     except Exception as e:
         log.warning("get_naver_research_sync(%s) 실패: %s", company, e)
         return "📄 **증권사 리포트**\n(조회 실패)"
