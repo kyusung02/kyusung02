@@ -195,67 +195,87 @@ def get_quarterly_financials_text_sync(ticker: str) -> str:
         return "📊 **분기 실적**\n(조회 실패)"
 
 
+def _fetch_research_list_html() -> str:
+    """네이버 금융 종목분석 리스트 페이지 HTML 본문."""
+    url = "https://finance.naver.com/research/company_list.naver"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with safe_opener.open(req, timeout=10) as resp:
+        return resp.read().decode('euc-kr', errors='ignore')
+
+
+def _parse_research_rows(html: str) -> list[dict]:
+    """리스트 페이지 HTML의 <tr> 행을 {stock,title,broker,date,link} 로 파싱."""
+    rows = re.findall(r'<tr>(.*?)</tr>', html, flags=re.DOTALL)
+    parsed = []
+    for row in rows:
+        sm = re.search(r'class="stock_item"[^>]*>([^<]+)</a>', row)
+        if not sm:
+            continue
+        tm = re.search(r'<a href="(company_read\.naver\?nid=\d+[^"]*)"[^>]*>([^<]+)</a>', row)
+        if not tm:
+            continue
+        # 제목 td 직후의 첫 plain <td>...</td> = 증권사명
+        bm = re.search(r'</td>\s*<td>([^<]+)</td>', row[tm.end():])
+        # PDF 직접 링크가 있으면 우선(없으면 read 페이지로 fallback)
+        pm = re.search(r'class="file"[^>]*>\s*<a href="(https://stock\.pstatic\.net/[^"]+\.pdf)"', row)
+        dm = re.search(r'class="date"[^>]*>([\d.]+)</td>', row)
+        read_url = "https://finance.naver.com/research/" + tm.group(1).replace('&amp;', '&')
+        parsed.append({
+            'stock':  sm.group(1).strip(),
+            'title':  tm.group(2).strip(),
+            'broker': bm.group(1).strip() if bm else '',
+            'date':   dm.group(1).strip() if dm else '',
+            'link':   pm.group(1) if pm else read_url,
+        })
+    return parsed
+
+
 def get_naver_research_sync(company: str) -> str:
-    """네이버 금융 증권사 리포트 페이지에서 종목명 일치 행 최대 5건.
+    """특정 종목의 최근 증권사 리포트 최대 5건 (텔레그램 마크다운 텍스트).
 
     네이버가 keyword 검색을 무력화해(2026년 확인) 전체 종목 분석 리스트를 받아
-    클라이언트단에서 종목명으로 필터링한다. 행 단위로 제목·증권사·날짜·PDF 링크를 함께 추출.
+    클라이언트단에서 종목명으로 필터링한다.
     """
     try:
-        url = "https://finance.naver.com/research/company_list.naver"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with safe_opener.open(req, timeout=10) as resp:
-            html = resp.read().decode('euc-kr', errors='ignore')
-
-        rows = re.findall(r'<tr>(.*?)</tr>', html, flags=re.DOTALL)
-        target = company.strip()
-        lines, seen, count = ["📄 **증권사 리포트** (최근)"], set(), 0
-
-        for row in rows:
-            sm = re.search(r'class="stock_item"[^>]*>([^<]+)</a>', row)
-            if not sm:
-                continue
-            stock_name = sm.group(1).strip()
-            if stock_name != target and target not in stock_name:
-                continue
-
-            tm = re.search(r'<a href="(company_read\.naver\?nid=\d+[^"]*)"[^>]*>([^<]+)</a>', row)
-            if not tm:
-                continue
-            title = tm.group(2).strip()
-            if title in seen or len(title) < 3:
-                continue
-            seen.add(title)
-
-            read_url = "https://finance.naver.com/research/" + tm.group(1).replace('&amp;', '&')
-
-            # 제목 td 직후의 첫 plain <td>...</td> = 증권사명
-            broker = ""
-            bm = re.search(r'</td>\s*<td>([^<]+)</td>', row[tm.end():])
-            if bm:
-                broker = bm.group(1).strip()
-
-            # PDF 직접 링크가 있으면 우선(없으면 read 페이지로 fallback)
-            pm = re.search(r'class="file"[^>]*>\s*<a href="(https://stock\.pstatic\.net/[^"]+\.pdf)"', row)
-            link = pm.group(1) if pm else read_url
-
-            dm = re.search(r'class="date"[^>]*>([\d.]+)</td>', row)
-            d_str = dm.group(1).strip() if dm else ""
-
-            entry = f"• [{_escape_md(title)}]({link})"
-            if broker:
-                entry += f" — {_escape_md(broker)}"
-            if d_str:
-                entry += f" ({d_str})"
-            lines.append(entry)
-
-            count += 1
-            if count >= 5:
-                break
-
-        if count == 0:
-            return "📄 **증권사 리포트**\n(최근 리포트 없음)"
-        return '\n'.join(lines)
+        html = _fetch_research_list_html()
     except Exception as e:
         log.warning("get_naver_research_sync(%s) 실패: %s", company, e)
         return "📄 **증권사 리포트**\n(조회 실패)"
+
+    target = company.strip()
+    lines, seen, count = ["📄 **증권사 리포트** (최근)"], set(), 0
+    for r in _parse_research_rows(html):
+        if r['stock'] != target and target not in r['stock']:
+            continue
+        if r['title'] in seen or len(r['title']) < 3:
+            continue
+        seen.add(r['title'])
+        entry = f"• [{_escape_md(r['title'])}]({r['link']})"
+        if r['broker']:
+            entry += f" — {_escape_md(r['broker'])}"
+        if r['date']:
+            entry += f" ({r['date']})"
+        lines.append(entry)
+        count += 1
+        if count >= 5:
+            break
+
+    if count == 0:
+        return "📄 **증권사 리포트**\n(최근 리포트 없음)"
+    return '\n'.join(lines)
+
+
+def get_today_research_sync(today: str | None = None) -> list[dict]:
+    """오늘(또는 지정 'YY.MM.DD') 발행된 증권사 종목분석 리포트 목록.
+
+    네이버 종목분석 리스트는 최신 30건만 노출되므로 하루 분량은 거의 다 잡힌다.
+    토·일·공휴일에는 거의 비어있다(빈 리스트 반환).
+    """
+    if today is None:
+        today = date.today().strftime('%y.%m.%d')
+    try:
+        html = _fetch_research_list_html()
+    except Exception as e:
+        log.warning("get_today_research_sync 실패: %s", e)
+        return []
+    return [r for r in _parse_research_rows(html) if r['date'] == today]

@@ -52,6 +52,7 @@ from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
 from handlers.semi import send_semi_briefing
 from handlers.report import handle_report
+from handlers.research import send_daily_research
 from handlers.life import send_weekly_info
 from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
 # import handlers.portfolio 시점에 on_trade_callback 데코레이터가 bot_client 에 자동 등록됨.
@@ -98,6 +99,13 @@ async def on_bot_msg(event):
     if text in ('/semi', '/반도체'):
         await event.respond("🔬 반도체 업황 스크리닝 중... (약 20~30초 소요)")
         await send_semi_briefing()
+        return
+
+    # ── 오늘의 증권사 리포트 ────────────────────────────────────────────────
+    # 주의: /리포트 startswith 보다 먼저 정확 매칭으로 잡는다.
+    if text == '/오늘리포트':
+        await event.respond("📄 오늘 발행 증권사 리포트 수집 중...")
+        await send_daily_research()
         return
 
     # ── 종합 리포트 ─────────────────────────────────────────────────────────
@@ -498,7 +506,9 @@ _HELP_TEXT = (
     "  `/섹터` — 국내 섹터별 등락률·핵심 이슈 브리핑 즉시 조회\n"
     "    ※ 평일 10/12/14/16시(:05) 자동 발송\n"
     "  `/semi` (또는 `/반도체`) — 반도체 업황 스크리닝 (한·미 메모리·장비·빅테크 CAPEX)\n"
-    "    ※ 매주 월 08:00 자동 발송\n\n"
+    "    ※ 매주 월 08:00 자동 발송\n"
+    "  `/오늘리포트` — 오늘 발행된 국내 증권사 리포트 모아보기 (보유·관심 종목 ⭐)\n"
+    "    ※ 평일 07:30 자동 발송\n\n"
     "🏠 **생활 브리핑**\n"
     "  `/장보기` — 주간 건강 식단 + 장보기 리스트\n"
     "  `/나들이` — 아이와 가기 좋은 나들이 장소 추천\n"
@@ -563,6 +573,12 @@ async def main():
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9,  minute=0, args=['shop'])
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, minute=0, args=['out'])
     scheduler.add_job(send_us_morning,  'cron', hour=7, minute=0)
+
+    # 오늘의 증권사 리포트: 평일 07:30 KST. 07:00 모닝과 08:00 반도체 사이 빈 슬롯.
+    scheduler.add_job(
+        send_daily_research, 'cron',
+        day_of_week='mon-fri', hour=7, minute=30,
+    )
 
     # 섹터 브리핑을 :05로 옮겨 DART 공시 감지(`*/30` → :00/:30)와 시간 충돌을 피한다.
     for hh in (10, 12, 14, 16):
