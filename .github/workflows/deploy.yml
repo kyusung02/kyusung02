@@ -25,6 +25,13 @@ jobs:
             set -e
             cd ~/kyusung02
 
+            echo "=== TZ 설정 확인 ==="
+            if ! grep -q 'Environment=TZ=Asia/Seoul' /etc/systemd/system/nemo-bot.service 2>/dev/null; then
+              sudo sed -i '/^\[Service\]/a Environment=TZ=Asia\/Seoul' /etc/systemd/system/nemo-bot.service
+              sudo systemctl daemon-reload
+              echo "TZ=Asia/Seoul 추가 완료"
+            fi
+
             echo "=== git pull ==="
             git pull origin master
 

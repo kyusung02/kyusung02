@@ -19,6 +19,7 @@
 | 시간 | 기능 |
 |------|------|
 | 매일 07:00 | 모닝 시황 브리핑 (`send_us_morning`) |
+| 평일 07:30 | 오늘의 증권사 리포트 (`send_daily_research`) |
 | 월 08:00 | 반도체 업황 스크리닝 (`send_semi_briefing`) |
 | 평일 08:30 | 어닝 D-0/D-1 푸시 (`check_and_notify_imminent_earnings`) |
 | 금 09:00 | 장보기 리스트 (`send_weekly_info('shop')`) |

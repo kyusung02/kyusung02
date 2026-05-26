@@ -87,6 +87,7 @@ After=network.target
 User=$USER
 WorkingDirectory=/home/$USER/kyusung02
 EnvironmentFile=/home/$USER/kyusung02/.env
+Environment=TZ=Asia/Seoul
 ExecStart=/usr/bin/python3 main.py
 Restart=always
 RestartSec=10
