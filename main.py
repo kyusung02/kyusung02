@@ -105,7 +105,7 @@ async def on_bot_msg(event):
     # 주의: /리포트 startswith 보다 먼저 정확 매칭으로 잡는다.
     if text == '/오늘리포트':
         await event.respond("📄 오늘 발행 증권사 리포트 수집 중...")
-        await send_daily_research()
+        await send_daily_research(debug=True)
         return
 
     # ── 종합 리포트 ─────────────────────────────────────────────────────────

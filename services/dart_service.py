@@ -278,4 +278,12 @@ def get_today_research_sync(today: str | None = None) -> list[dict]:
     except Exception as e:
         log.warning("get_today_research_sync 실패: %s", e)
         return []
-    return [r for r in _parse_research_rows(html) if r['date'] == today]
+    all_rows = _parse_research_rows(html)
+    matched = [r for r in all_rows if r['date'] == today]
+    if not matched and all_rows:
+        dates = set(r['date'] for r in all_rows)
+        log.warning("리포트 날짜 불일치: today=%s, html dates=%s, html_len=%d",
+                    today, dates, len(html))
+    elif not all_rows:
+        log.warning("리포트 파싱 결과 0건: today=%s, html_len=%d", today, len(html))
+    return matched
