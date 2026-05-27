@@ -573,10 +573,10 @@ async def main():
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, minute=0, args=['out'])
     scheduler.add_job(send_us_morning,  'cron', hour=7, minute=0)
 
-    # 오늘의 증권사 리포트: 평일 07:30 KST. 07:00 모닝과 08:00 반도체 사이 빈 슬롯.
+    # 오늘의 증권사 리포트: 평일 09:00 KST. 장 시작 시점에 리포트가 충분히 올라온 뒤 발송.
     scheduler.add_job(
         send_daily_research, 'cron',
-        day_of_week='mon-fri', hour=7, minute=30,
+        day_of_week='mon-fri', hour=9, minute=0,
     )
 
     # 섹터 브리핑을 :05로 옮겨 DART 공시 감지(`*/30` → :00/:30)와 시간 충돌을 피한다.

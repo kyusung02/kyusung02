@@ -14,9 +14,16 @@ _USD_KRW_FALLBACK = 1350.0
 
 
 def get_current_price(ticker: str) -> float | None:
-    """yfinance 일봉 종가. 실패/빈 응답 시 None."""
+    """yfinance 현재가(장중) 또는 최근 종가. 실패/빈 응답 시 None."""
     try:
-        hist = yf.Ticker(ticker).history(period='2d')
+        t = yf.Ticker(ticker)
+        try:
+            price = t.fast_info['lastPrice']
+            if price and price > 0:
+                return float(price)
+        except (KeyError, TypeError, AttributeError):
+            pass
+        hist = t.history(period='5d')
         if hist.empty:
             return None
         return float(hist['Close'].iloc[-1])
@@ -28,7 +35,14 @@ def get_current_price(ticker: str) -> float | None:
 def get_usd_krw() -> float:
     """USD/KRW 환율. 조회 실패 시 보수적 fallback 반환."""
     try:
-        hist = yf.Ticker("KRW=X").history(period='2d')
+        t = yf.Ticker("KRW=X")
+        try:
+            rate = t.fast_info['lastPrice']
+            if rate and rate > 0:
+                return float(rate)
+        except (KeyError, TypeError, AttributeError):
+            pass
+        hist = t.history(period='5d')
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
     except Exception as e:

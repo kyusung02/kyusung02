@@ -65,7 +65,7 @@ downloads/              ← PDF 임시 저장 (분석 후 삭제)
 | 시간 | 기능 |
 |------|------|
 | 매일 07:00 | 모닝 시황 (`send_us_morning`) |
-| 평일 07:30 | 증권사 리포트 (`send_daily_research`) |
+| 평일 09:00 | 증권사 리포트 (`send_daily_research`) |
 | 월 08:00 | 반도체 업황 (`send_semi_briefing`) |
 | 평일 08:30 | 어닝 D-0/D-1 푸시 (`check_and_notify_imminent_earnings`) |
 | 평일 10/12/14/16시 :05 | 국내 섹터 브리핑 (`send_kr_sector_briefing`) |
