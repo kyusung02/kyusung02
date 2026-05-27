@@ -10,7 +10,7 @@ import yfinance as yf
 from services.gemini import FINANCE_PROMPT, generate_with_retry
 from services.stock import dart, is_korean_ticker
 from services.chart import find_row, quarter_label, financial_unit
-from utils import safe_opener
+from utils import safe_opener, kst_today
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _escape_md(text: str) -> str:
 def get_finance_summary_sync(company: str) -> str:
     """DART 재무 조회 + Gemini 분석 (동기 함수)."""
     try:
-        current_year = date.today().year - 1
+        current_year = kst_today().year - 1
         df = None
         used_year = None
         for year in (current_year, current_year - 1):
@@ -61,7 +61,7 @@ def get_finance_summary_sync(company: str) -> str:
             cols.append('frmtrm_amount')
         data_str = essential[cols].to_string()
 
-        today = date.today().strftime("%Y년 %m월 %d일")
+        today = kst_today().strftime("%Y년 %m월 %d일")
         response = generate_with_retry(
             [FINANCE_PROMPT + f"\n\n작성일: {today}\n종목: {company}\n데이터:\n{data_str}"]
         )
@@ -119,7 +119,7 @@ def get_corp_overview_sync(company: str, ticker: str) -> str:
 def get_dart_recent_filings_sync(company: str) -> str:
     """DART 최근 3개월 중요 공시 최대 5건 (동기 함수)."""
     try:
-        start_dt = (date.today() - timedelta(days=90)).strftime('%Y-%m-%d')
+        start_dt = (kst_today() - timedelta(days=90)).strftime('%Y-%m-%d')
         reports  = dart.list(company, start=start_dt)
         if reports is None or reports.empty:
             return "📋 **최근 주요 공시**\n최근 3개월 내 공시 없음"
@@ -272,7 +272,7 @@ def get_today_research_sync(today: str | None = None) -> list[dict]:
     토·일·공휴일에는 거의 비어있다(빈 리스트 반환).
     """
     if today is None:
-        today = date.today().strftime('%y.%m.%d')
+        today = kst_today().strftime('%y.%m.%d')
     try:
         html = _fetch_research_list_html()
     except Exception as e:

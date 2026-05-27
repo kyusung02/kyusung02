@@ -13,6 +13,7 @@
 import math
 import logging
 from datetime import date, timedelta
+from utils import kst_today
 import yfinance as yf
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ def get_earnings_history(ticker: str, history_limit: int = 6) -> dict | None:
         return None
 
     df = df.sort_index(ascending=False)
-    today = date.today()
+    today = kst_today()
     upcoming: list[dict] = []
     history:  list[dict] = []
 
@@ -89,7 +90,7 @@ def get_upcoming_earnings_for(tickers: list[str], within_days: int = 7) -> list[
     각 dict: {ticker, name(=ticker), date, eps_est, days_until}
     name 은 호출자가 보유종목/관심종목 매핑으로 덮어쓸 것.
     """
-    today = date.today()
+    today = kst_today()
     cutoff = today + timedelta(days=within_days)
     out: list[dict] = []
 
@@ -157,7 +158,7 @@ def format_earnings_message(name: str, ticker: str, data: dict) -> str:
 
 def collect_imminent_earnings(tickers: list[str], days_window: int = 1) -> list[dict]:
     """D-0 ~ D+days_window 사이 어닝 예정만 추출 (푸시 알림용)."""
-    today  = date.today()
+    today  = kst_today()
     cutoff = today + timedelta(days=days_window)
     out: list[dict] = []
 

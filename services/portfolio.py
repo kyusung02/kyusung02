@@ -6,7 +6,7 @@ yfinance 가격 조회 실패는 행 단위로 격리하고 전체 평가는 계
 """
 import logging
 import yfinance as yf
-from datetime import date
+from utils import kst_today
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ def evaluate_portfolio(portfolio: dict) -> dict:
         "total_pnl_krw":   total_pnl_krw,
         "total_pct":       total_pct,
         "krw_rate":        krw_rate,
-        "evaluated_at":    date.today().isoformat(),
+        "evaluated_at":    kst_today().isoformat(),
     }
 
 

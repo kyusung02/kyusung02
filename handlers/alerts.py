@@ -9,7 +9,6 @@ import time
 import uuid
 import logging
 import asyncio
-from datetime import datetime
 from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
@@ -19,6 +18,7 @@ from storage import (
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.alerts import check_alerts
 from services.gemini import parse_alert_intent
+from utils import kst_now
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ async def handle_alert_add(event, args_text: str):
         'type':       op_type,
         'value':      value,
         'note':       note,
-        'created_at': datetime.now().isoformat(timespec='seconds'),
+        'created_at': kst_now().isoformat(timespec='seconds'),
     }
     _, total = add_alert(alert)
 
@@ -352,7 +352,7 @@ async def on_alert_callback(event):
         'type':       pending['type'],
         'value':      pending['value'],
         'note':       pending.get('note', ''),
-        'created_at': datetime.now().isoformat(timespec='seconds'),
+        'created_at': kst_now().isoformat(timespec='seconds'),
     }
     _, total = add_alert(alert)
 

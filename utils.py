@@ -1,5 +1,5 @@
 """
-공통 유틸리티 — 웹 크롤링, YouTube ID 추출, 텔레그램 메시지 청크 분할
+공통 유틸리티 — 웹 크롤링, YouTube ID 추출, 텔레그램 메시지 청크 분할, KST 시간
 """
 import re
 import ipaddress
@@ -7,6 +7,18 @@ import socket
 import logging
 import urllib.request
 import urllib.parse
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo('Asia/Seoul')
+
+
+def kst_now() -> datetime:
+    return datetime.now(KST)
+
+
+def kst_today() -> date:
+    return datetime.now(KST).date()
 
 log = logging.getLogger(__name__)
 

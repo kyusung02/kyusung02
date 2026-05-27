@@ -12,7 +12,6 @@ import time
 import uuid
 import logging
 import asyncio
-from datetime import date
 from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
@@ -21,6 +20,7 @@ from storage import (
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.portfolio import evaluate_portfolio, format_portfolio_message
+from utils import kst_today
 from services.gemini import parse_trade_intent
 
 log = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def handle_buy(event, args_text: str):
         )
         return
     if trade_date is None:
-        trade_date = date.today().isoformat()
+        trade_date = kst_today().isoformat()
     ok, msg = add_buy(ticker, display, market, shares, price, trade_date)
     await event.reply(
         f"{msg}\n"
@@ -224,7 +224,7 @@ async def handle_trade(event, args_text: str):
         if not parsed.get('shares') or not parsed.get('price'):
             await notice.edit("⚠️ 매수는 수량과 단가가 모두 필요합니다.")
             return
-        parsed['trade_date'] = parsed.get('trade_date') or date.today().isoformat()
+        parsed['trade_date'] = parsed.get('trade_date') or kst_today().isoformat()
 
     _cleanup_pending()
     trade_id = uuid.uuid4().hex[:12]

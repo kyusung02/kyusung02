@@ -5,14 +5,11 @@
 """
 import logging
 import asyncio
-from datetime import date
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
-from services.dart_service import (
-    get_today_research_sync, _escape_md,
-    _fetch_research_list_html, _parse_research_rows,
-)
+from services.dart_service import get_today_research_sync, _escape_md
 from storage import load_watchlist, load_portfolio
+from utils import kst_today
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +19,7 @@ _TG_SAFE_LIMIT = 4000
 
 def _format_today_research(rows: list[dict]) -> list[str]:
     """리포트 행 리스트 → 텔레그램에 보낼 1~N 청크로 분할된 마크다운 텍스트."""
-    today_str = date.today().strftime('%Y.%m.%d')
+    today_str = kst_today().strftime('%Y.%m.%d')
     if not rows:
         return [f"📄 **오늘의 증권사 리포트** ({today_str})\n(오늘 등록된 리포트가 없습니다)"]
 
@@ -61,40 +58,14 @@ def _format_today_research(rows: list[dict]) -> list[str]:
     return chunks
 
 
-async def send_daily_research(*, debug: bool = False):
+async def send_daily_research():
     """평일 07:30 자동 실행 + /오늘리포트 명령어로 수동 호출."""
     loop = asyncio.get_running_loop()
     try:
         rows = await loop.run_in_executor(_executor, get_today_research_sync)
-        if not rows and debug:
-            diag = await loop.run_in_executor(_executor, _diagnose_research)
-            await bot_client.send_message(MY_TELEGRAM_ID, diag)
-            return
         for chunk in _format_today_research(rows):
             await bot_client.send_message(MY_TELEGRAM_ID, chunk, parse_mode='md', link_preview=False)
         log.info("오늘의 리포트 전송 완료 (%d건)", len(rows))
     except Exception as e:
         log.error("오늘의 리포트 전송 실패: %s", e)
         await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 오늘의 리포트 생성 중 오류가 발생했습니다.")
-
-
-def _diagnose_research() -> str:
-    """리포트가 0건일 때 원인 진단 텍스트 생성."""
-    from datetime import date
-    today = date.today().strftime('%y.%m.%d')
-    lines = [f"🔍 **리포트 진단**\ntoday={today}"]
-    try:
-        html = _fetch_research_list_html()
-        lines.append(f"html length={len(html)}")
-        all_rows = _parse_research_rows(html)
-        lines.append(f"parsed rows={len(all_rows)}")
-        if all_rows:
-            dates = sorted(set(r['date'] for r in all_rows))
-            lines.append(f"dates in html={dates}")
-            lines.append(f"first row: {all_rows[0]['stock']} ({all_rows[0]['date']})")
-        else:
-            lines.append("html snippet (first 500):")
-            lines.append(f"```{html[:500]}```")
-    except Exception as e:
-        lines.append(f"fetch error: {e}")
-    return '\n'.join(lines)

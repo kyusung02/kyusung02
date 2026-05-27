@@ -3,10 +3,10 @@
 """
 import logging
 import asyncio
-from datetime import datetime
 import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
+from utils import kst_now
 
 log = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def _fetch_sector_data() -> dict:
 
 
 def _format_message(data: dict) -> str:
-    now     = datetime.now()
+    now     = kst_now()
     weekday = _WEEKDAY_KR[now.weekday()]
     lines   = [
         "🇰🇷 **국내 증시 섹터별 브리핑**",

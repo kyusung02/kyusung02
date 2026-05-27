@@ -6,8 +6,8 @@ DART 핸들러 — 관심종목 공시 자동 감지 (데이터 페칭은 servic
 """
 import logging
 import asyncio
-from datetime import date
 from clients import bot_client, _executor
+from utils import kst_today
 from config import MY_TELEGRAM_ID, DART_ALERT_KEYWORDS
 from services.dart_service import (
     DART_FILING_URL,
@@ -52,7 +52,7 @@ async def check_dart_watchlist():
         return
 
     seen     = load_seen_filings()
-    today    = date.today().strftime('%Y-%m-%d')
+    today    = kst_today().strftime('%Y-%m-%d')
     loop     = asyncio.get_running_loop()
     new_seen = list(seen)
 

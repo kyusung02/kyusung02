@@ -3,13 +3,13 @@
 """
 import logging
 import asyncio
-from datetime import date
 import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from services.gemini import generate_with_retry, build_morning_market_prompt
 from storage import load_portfolio, load_watchlist, resolve_ticker_input
 from services.portfolio import evaluate_portfolio, format_portfolio_message
+from utils import kst_today
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.earnings import get_upcoming_earnings_for, format_upcoming_briefing
 
@@ -74,7 +74,7 @@ async def send_us_morning():
     loop     = asyncio.get_running_loop()
     data_str = await loop.run_in_executor(_executor, _fetch_us_morning_data)
 
-    today  = date.today().strftime('%Y년 %m월 %d일')
+    today  = kst_today().strftime('%Y년 %m월 %d일')
     prompt = build_morning_market_prompt(data_str, today)
 
     try:

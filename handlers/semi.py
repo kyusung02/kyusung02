@@ -6,7 +6,6 @@
 """
 import logging
 import asyncio
-from datetime import datetime
 
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
@@ -14,6 +13,7 @@ from services.semi import (
     fetch_semi_data, format_semi_data_block, build_semi_briefing_prompt,
 )
 from services.gemini import generate_with_retry
+from utils import kst_now
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ _WEEKDAY_KR = ['월요일', '화요일', '수요일', '목요일', '금요일', 
 
 def _format_header_message(data: dict) -> str:
     """Gemini 호출 전에 미리 보내는 정량 요약 (원본 데이터 카드)."""
-    now = datetime.now()
+    now = kst_now()
     weekday = _WEEKDAY_KR[now.weekday()]
     lines = [
         "🔬 **반도체 업황 스크리닝**",
@@ -88,7 +88,7 @@ async def send_semi_briefing():
         return
 
     # 2) Gemini 코멘트 (PER vs PBR 프레임)
-    today = datetime.now().strftime('%Y년 %m월 %d일')
+    today = kst_now().strftime('%Y년 %m월 %d일')
     data_block = format_semi_data_block(data)
     prompt = build_semi_briefing_prompt(data_block, today)
 

@@ -3,10 +3,28 @@
 """
 import os
 import json
+import tempfile
 import logging
 from config import DATA_DIR, WATCH_CHANNELS
 
 log = logging.getLogger(__name__)
+
+
+def _atomic_json_save(path: str, data, **kwargs):
+    """임시 파일에 쓴 뒤 rename — 프로세스 크래시 시 파일 손상 방지."""
+    dir_name = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, **kwargs)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 
 WATCHLIST_PATH    = os.path.join(DATA_DIR, "watchlist.json")
 CHANNELS_PATH     = os.path.join(DATA_DIR, "channels.json")
@@ -41,8 +59,7 @@ def load_watchlist() -> list[str]:
 
 
 def save_watchlist(stocks: list[str]):
-    with open(WATCHLIST_PATH, 'w', encoding='utf-8') as f:
-        json.dump(stocks, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(WATCHLIST_PATH, stocks, ensure_ascii=False, indent=2)
 
 
 def add_to_watchlist(name: str) -> tuple[bool, str]:
@@ -77,8 +94,7 @@ def load_channels() -> list:
 
 
 def save_channels(channels: list):
-    with open(CHANNELS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(channels, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(CHANNELS_PATH, channels, ensure_ascii=False, indent=2)
 
 
 # ── DART 공시 수신 이력 ───────────────────────────────────────────────────────
@@ -105,8 +121,7 @@ def save_seen_filings(seen):
         items = list(dict.fromkeys(seen))  # 삽입 순서 유지 dedup
     if len(items) > _MAX_SEEN:
         items = items[-_MAX_SEEN:]
-    with open(SEEN_FILINGS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(items, f)
+    _atomic_json_save(SEEN_FILINGS_PATH, items)
 
 
 # ── 포트폴리오 (보유 종목) ───────────────────────────────────────────────────
@@ -126,8 +141,7 @@ def load_portfolio() -> dict:
 
 
 def save_portfolio(portfolio: dict):
-    with open(PORTFOLIO_PATH, 'w', encoding='utf-8') as f:
-        json.dump(portfolio, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(PORTFOLIO_PATH, portfolio, ensure_ascii=False, indent=2)
 
 
 def add_buy(ticker: str, name: str, market: str, shares: float, price: float, trade_date: str) -> tuple[bool, str]:
@@ -197,8 +211,7 @@ def save_seen_earnings(seen):
         items = list(dict.fromkeys(seen))
     if len(items) > _MAX_SEEN_EARNINGS:
         items = items[-_MAX_SEEN_EARNINGS:]
-    with open(SEEN_EARNINGS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(items, f)
+    _atomic_json_save(SEEN_EARNINGS_PATH, items)
 
 
 # ── 가격/이벤트 알림 ──────────────────────────────────────────────────────────
@@ -219,8 +232,7 @@ def load_alerts() -> list:
 
 
 def save_alerts(alerts: list):
-    with open(ALERTS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(alerts, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(ALERTS_PATH, alerts, ensure_ascii=False, indent=2)
 
 
 def add_alert(alert: dict) -> tuple[bool, int]:

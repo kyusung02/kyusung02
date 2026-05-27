@@ -4,7 +4,6 @@ import re
 import sys
 import asyncio
 import logging
-from datetime import date
 from telethon import events
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -62,7 +61,7 @@ from handlers.alerts import (
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
 from handlers.earnings import handle_earnings, check_and_notify_imminent_earnings
-from utils import extract_youtube_id, fetch_webpage_text, reply_chunked
+from utils import extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today
 from youtube_transcript_api import YouTubeTranscriptApi
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -105,7 +104,7 @@ async def on_bot_msg(event):
     # 주의: /리포트 startswith 보다 먼저 정확 매칭으로 잡는다.
     if text == '/오늘리포트':
         await event.respond("📄 오늘 발행 증권사 리포트 수집 중...")
-        await send_daily_research(debug=True)
+        await send_daily_research()
         return
 
     # ── 종합 리포트 ─────────────────────────────────────────────────────────
@@ -319,7 +318,7 @@ async def _cmd_us(event, query: str, loop):
 
 async def _cmd_dart_filings(event, comp: str, loop):
     """`/공시` — 최근 3건 공시. 조회 범위는 최근 90일 기준 동적 계산."""
-    start_dt = date.today().replace(month=1, day=1).strftime('%Y-%m-%d')
+    start_dt = kst_today().replace(month=1, day=1).strftime('%Y-%m-%d')
     reports  = await loop.run_in_executor(
         _executor, lambda: dart.list(comp, start=start_dt)
     )
