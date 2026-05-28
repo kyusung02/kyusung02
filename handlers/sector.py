@@ -5,7 +5,7 @@ import logging
 import asyncio
 import yfinance as yf
 from clients import bot_client, _executor
-from config import MY_TELEGRAM_ID
+from config import BROADCAST_ID
 from utils import kst_now
 
 log = logging.getLogger(__name__)
@@ -217,10 +217,10 @@ async def send_kr_sector_briefing():
     try:
         data = await loop.run_in_executor(_executor, _fetch_sector_data)
         if not data or not data.get("sectors"):
-            await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 섹터 데이터 조회에 실패했습니다.")
+            await bot_client.send_message(BROADCAST_ID, "⚠️ 섹터 데이터 조회에 실패했습니다.")
             return
-        await bot_client.send_message(MY_TELEGRAM_ID, _format_message(data), parse_mode="md")
+        await bot_client.send_message(BROADCAST_ID, _format_message(data), parse_mode="md")
         log.info("섹터 브리핑 전송 완료")
     except Exception as e:
         log.error("섹터 브리핑 전송 실패: %s", e)
-        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 섹터 브리핑 생성 중 오류가 발생했습니다.")
+        await bot_client.send_message(BROADCAST_ID, "⚠️ 섹터 브리핑 생성 중 오류가 발생했습니다.")

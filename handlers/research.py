@@ -6,7 +6,7 @@
 import logging
 import asyncio
 from clients import bot_client, _executor
-from config import MY_TELEGRAM_ID
+from config import BROADCAST_ID
 from services.dart_service import get_today_research_sync, _escape_md
 from storage import load_watchlist, load_portfolio
 from utils import kst_today
@@ -64,8 +64,8 @@ async def send_daily_research():
     try:
         rows = await loop.run_in_executor(_executor, get_today_research_sync)
         for chunk in _format_today_research(rows):
-            await bot_client.send_message(MY_TELEGRAM_ID, chunk, parse_mode='md', link_preview=False)
+            await bot_client.send_message(BROADCAST_ID, chunk, parse_mode='md', link_preview=False)
         log.info("오늘의 리포트 전송 완료 (%d건)", len(rows))
     except Exception as e:
         log.error("오늘의 리포트 전송 실패: %s", e)
-        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 오늘의 리포트 생성 중 오류가 발생했습니다.")
+        await bot_client.send_message(BROADCAST_ID, "⚠️ 오늘의 리포트 생성 중 오류가 발생했습니다.")

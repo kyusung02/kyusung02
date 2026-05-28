@@ -4,7 +4,7 @@
 import logging
 import asyncio
 from clients import bot_client, _executor
-from config import MY_TELEGRAM_ID
+from config import BROADCAST_ID
 from services.gemini import generate_with_retry, build_shopping_prompt, build_outing_prompt
 from utils import kst_today
 
@@ -24,6 +24,6 @@ async def send_weekly_info(mode: str):
         response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
     except Exception as e:
         log.warning("send_weekly_info(%s) Gemini 호출 실패: %s", mode, e)
-        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 주간 브리핑 생성에 실패했습니다.")
+        await bot_client.send_message(BROADCAST_ID, "⚠️ 주간 브리핑 생성에 실패했습니다.")
         return
-    await bot_client.send_message(MY_TELEGRAM_ID, response.text)
+    await bot_client.send_message(BROADCAST_ID, response.text)

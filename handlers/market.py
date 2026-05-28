@@ -5,7 +5,7 @@ import logging
 import asyncio
 import yfinance as yf
 from clients import bot_client, _executor
-from config import MY_TELEGRAM_ID
+from config import MY_TELEGRAM_ID, BROADCAST_ID
 from services.gemini import generate_with_retry, build_morning_market_prompt
 from storage import load_portfolio, load_watchlist, resolve_ticker_input
 from services.portfolio import evaluate_portfolio, format_portfolio_message
@@ -81,12 +81,12 @@ async def send_us_morning():
         response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
     except Exception as e:
         log.warning("Gemini 시황 요약 실패: %s", e)
-        await bot_client.send_message(MY_TELEGRAM_ID,
+        await bot_client.send_message(BROADCAST_ID,
             f"⚠️ 시황 분석 중 오류가 발생했습니다.\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
         )
     else:
         raw_data_block = f"\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
-        await bot_client.send_message(MY_TELEGRAM_ID, response.text + raw_data_block)
+        await bot_client.send_message(BROADCAST_ID, response.text + raw_data_block)
 
     # 포트폴리오 자동 평가 첨부 (보유 종목이 있을 때만)
     portfolio = load_portfolio()

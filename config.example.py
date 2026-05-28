@@ -43,6 +43,20 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 # 확인 방법: @userinfobot 에게 아무 메시지 전송 → "Id: 123456789" 응답
 MY_TELEGRAM_ID = int(os.environ.get("MY_TELEGRAM_ID", "0"))
 
+# 공유 채널 ID (선택) — 시황/섹터/공시/어닝 등 broadcast 성격 알림을
+# 친구들과 함께 보고 싶을 때 비공개 채널을 만들어 봇을 admin으로 추가한 뒤
+# 해당 채널 ID를 설정한다. 형식: -1001234567890 (음수 정수).
+# 확인 방법: 채널에서 임의 메시지를 봇에 forward → forwarded_from_chat.id 또는
+#           @userinfobot 에게 채널 메시지 forward 시 응답에 포함됨.
+# 비워두면 모든 발송이 MY_TELEGRAM_ID(본인 DM)로 폴백된다.
+SHARED_CHANNEL_ID = int(os.environ.get("SHARED_CHANNEL_ID", "0"))
+
+# 스케줄 자동 발송 + broadcast 성격 명령어(/시황·/섹터·/반도체·/오늘리포트·
+# /장보기·/나들이) 결과의 발송 대상.
+# 채널이 설정돼 있으면 채널로, 아니면 본인 DM으로 폴백.
+# 개인 응답(차트, 포트폴리오, 알림 관리)은 MY_TELEGRAM_ID 그대로 사용.
+BROADCAST_ID = SHARED_CHANNEL_ID if SHARED_CHANNEL_ID else MY_TELEGRAM_ID
+
 # ==========================================
 # API 키
 # ==========================================

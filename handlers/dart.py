@@ -8,7 +8,7 @@ import logging
 import asyncio
 from clients import bot_client, _executor
 from utils import kst_today
-from config import MY_TELEGRAM_ID, DART_ALERT_KEYWORDS
+from config import BROADCAST_ID, DART_ALERT_KEYWORDS
 from services.dart_service import (
     DART_FILING_URL,
     stock_code_from_ticker,
@@ -72,7 +72,7 @@ async def check_dart_watchlist():
                 link = DART_FILING_URL.format(rcpNo)
 
                 await bot_client.send_message(
-                    MY_TELEGRAM_ID,
+                    BROADCAST_ID,
                     f"{flag} **[관심종목 공시]** {comp}\n"
                     f"▪️ {row['rcept_dt']} | [{report_nm}]({link})",
                     link_preview=False,
@@ -86,7 +86,7 @@ async def check_dart_watchlist():
                             _executor, get_finance_summary_sync, comp,
                         )
                         await bot_client.send_message(
-                            MY_TELEGRAM_ID,
+                            BROADCAST_ID,
                             f"📈 **[자동 재무 분석]** {comp}\n\n{fin_text}",
                         )
                     except Exception as e:

@@ -8,7 +8,7 @@ import logging
 import asyncio
 
 from clients import bot_client, _executor
-from config import MY_TELEGRAM_ID
+from config import BROADCAST_ID
 from services.semi import (
     fetch_semi_data, format_semi_data_block, build_semi_briefing_prompt,
 )
@@ -72,17 +72,17 @@ async def send_semi_briefing():
         data = await loop.run_in_executor(_executor, fetch_semi_data)
     except Exception as e:
         log.error("반도체 데이터 수집 실패: %s", e)
-        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 반도체 데이터 조회에 실패했습니다.")
+        await bot_client.send_message(BROADCAST_ID, "⚠️ 반도체 데이터 조회에 실패했습니다.")
         return
 
     if not data or not data.get("groups"):
-        await bot_client.send_message(MY_TELEGRAM_ID, "⚠️ 반도체 데이터가 비어 있습니다.")
+        await bot_client.send_message(BROADCAST_ID, "⚠️ 반도체 데이터가 비어 있습니다.")
         return
 
     # 1) 정량 데이터 카드 먼저
     header_msg = _format_header_message(data)
     try:
-        await bot_client.send_message(MY_TELEGRAM_ID, header_msg, parse_mode='md')
+        await bot_client.send_message(BROADCAST_ID, header_msg, parse_mode='md')
     except Exception as e:
         log.error("반도체 헤더 메시지 전송 실패: %s", e)
         return
@@ -94,12 +94,12 @@ async def send_semi_briefing():
 
     try:
         response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
-        await bot_client.send_message(MY_TELEGRAM_ID, response.text)
+        await bot_client.send_message(BROADCAST_ID, response.text)
         log.info("반도체 브리핑 전송 완료")
     except Exception as e:
         log.warning("Gemini 반도체 코멘트 실패: %s", e)
         # 헤더는 이미 보냈으니 코멘트만 실패 알림
         await bot_client.send_message(
-            MY_TELEGRAM_ID,
+            BROADCAST_ID,
             "⚠️ AI 코멘트 생성 중 오류 — 위의 원본 데이터만 참고하세요."
         )
