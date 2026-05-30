@@ -1,6 +1,7 @@
 """
 공통 유틸리티 — 웹 크롤링, YouTube ID 추출, 텔레그램 메시지 청크 분할, KST 시간
 """
+import os
 import re
 import ipaddress
 import socket
@@ -19,6 +20,17 @@ def kst_now() -> datetime:
 
 def kst_today() -> date:
     return datetime.now(KST).date()
+
+
+def channel_summary_enabled() -> bool:
+    """채널 요약 서비스 활성화 여부 — env에서 직접 판독.
+
+    config.py에서 import하지 않고 os.environ을 직접 읽어, VM의 config.py가
+    구버전이라 변수가 없어도 ImportError로 죽지 않게 한다(2026-05-15 사고 패턴 회피).
+    활성화: 환경변수 CHANNEL_SUMMARY_ENABLED=true.
+    """
+    return os.environ.get("CHANNEL_SUMMARY_ENABLED", "false").strip().lower() == "true"
+
 
 log = logging.getLogger(__name__)
 
@@ -135,8 +147,44 @@ def fetch_webpage_text(url: str) -> str | None:
 
 
 async def reply_chunked(event, text: str, chunk: int = MAX_TG_MESSAGE_LEN) -> None:
-    """Telegram 4096자 한도를 넘는 메시지를 분할 전송."""
+    """Telegram 4096자 한도 초과 메시지를 줄 경계에서 분할 전송.
+
+    글자 단위로 자르면 마크다운 엔티티(**굵게**·[링크]()·``` 코드블록)가 경계에서
+    깨지므로 줄 단위로 누적한다. ``` 코드펜스가 청크 경계를 넘으면 현재 청크를 닫고
+    다음 청크에서 다시 연다. 한 줄이 단독으로 한도를 넘으면 그 줄만 글자 단위 분할.
+    """
     if not text:
         return
-    for i in range(0, len(text), chunk):
-        await event.reply(text[i:i + chunk])
+
+    _FENCE = '\n```'             # 펜스 열린 청크에 덧붙는 닫기(이어가기 시 여유분 예약)
+    buf: list[str] = []
+    size = 0
+    fence_open = False
+
+    async def _flush():
+        nonlocal buf, size
+        if not buf:
+            return
+        body = '\n'.join(buf)
+        if fence_open:
+            body += _FENCE           # 청크 안에서 열린 코드펜스를 닫아 엔티티 보존
+        await event.reply(body)
+        buf, size = (['```'], 4) if fence_open else ([], 0)  # 다음 청크에서 펜스 이어가기
+
+    # 펜스가 버퍼 중간에서 열릴 수 있으므로 닫기 '\n```'(4자) 여유분을 항상 예약한다.
+    limit = chunk - len(_FENCE)
+    for line in text.split('\n'):
+        if len(line) + 1 > limit:    # 단독으로 한도를 넘는 라인 — 최후수단 글자 분할
+            await _flush()
+            for i in range(0, len(line), chunk):
+                await event.reply(line[i:i + chunk])
+            continue
+        if size + len(line) + 1 > limit:
+            await _flush()
+        buf.append(line)
+        size += len(line) + 1
+        if line.lstrip().startswith('```'):
+            fence_open = not fence_open
+
+    if buf:
+        await event.reply('\n'.join(buf) + (_FENCE if fence_open else ''))

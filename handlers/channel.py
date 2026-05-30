@@ -6,11 +6,11 @@ import logging
 import asyncio
 from telethon import events
 from clients import bot_client, user_client, _executor
-from config import MY_TELEGRAM_ID, DOWNLOAD_DIR, CHANNEL_SUMMARY_ENABLED
+from config import MY_TELEGRAM_ID, DOWNLOAD_DIR
 from services.gemini import (
     LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
 )
-from utils import extract_youtube_id, fetch_webpage_text
+from utils import extract_youtube_id, fetch_webpage_text, channel_summary_enabled
 from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ async def update_channel_handler(channels: list):
     CHANNEL_SUMMARY_ENABLED=false 인 경우 channels.json 저장만 반영하고
     실제 핸들러 재등록은 스킵합니다(요약 서비스 비활성 보장).
     """
-    if not CHANNEL_SUMMARY_ENABLED:
+    if not channel_summary_enabled():
         log.info("채널 요약 서비스 비활성 — 핸들러 재등록 스킵 (channels.json 만 갱신됨)")
         return
     user_client.remove_event_handler(on_channel_msg)

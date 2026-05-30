@@ -30,7 +30,6 @@ if _SENTRY_DSN:
 from config import (
     TELEGRAM_BOT_TOKEN, MY_TELEGRAM_ID,
     DOWNLOAD_DIR, CHARTS_DIR, DART_ALERT_KEYWORDS,
-    CHANNEL_SUMMARY_ENABLED,
 )
 from clients import user_client, bot_client, _executor
 from storage import (
@@ -61,7 +60,7 @@ from handlers.alerts import (
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
 from handlers.earnings import handle_earnings, check_and_notify_imminent_earnings
-from utils import extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today
+from utils import extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today, channel_summary_enabled
 from youtube_transcript_api import YouTubeTranscriptApi
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -317,7 +316,7 @@ async def _cmd_us(event, query: str, loop):
 
 
 async def _cmd_dart_filings(event, comp: str, loop):
-    """`/공시` — 최근 3건 공시. 조회 범위는 최근 90일 기준 동적 계산."""
+    """`/공시` — 최근 3건 공시. 조회 범위는 당해 연초(1월 1일)부터 (YTD)."""
     start_dt = kst_today().replace(month=1, day=1).strftime('%Y-%m-%d')
     reports  = await loop.run_in_executor(
         _executor, lambda: dart.list(comp, start=start_dt)
@@ -507,7 +506,7 @@ _HELP_TEXT = (
     "  `/semi` (또는 `/반도체`) — 반도체 업황 스크리닝 (한·미 메모리·장비·빅테크 CAPEX)\n"
     "    ※ 매주 월 08:00 자동 발송\n"
     "  `/오늘리포트` — 오늘 발행된 국내 증권사 리포트 모아보기 (보유·관심 종목 ⭐)\n"
-    "    ※ 평일 07:30 자동 발송\n\n"
+    "    ※ 평일 09:00 자동 발송\n\n"
     "🏠 **생활 브리핑**\n"
     "  `/장보기` — 주간 건강 식단 + 장보기 리스트\n"
     "  `/나들이` — 아이와 가기 좋은 나들이 장소 추천\n"
@@ -555,7 +554,7 @@ async def main():
                         attempt, _START_RETRIES, exc, _START_RETRY_DELAY)
             await asyncio.sleep(_START_RETRY_DELAY)
 
-    if CHANNEL_SUMMARY_ENABLED:
+    if channel_summary_enabled():
         init_channels = load_channels()
         if init_channels:
             user_client.add_event_handler(on_channel_msg, events.NewMessage(chats=init_channels))

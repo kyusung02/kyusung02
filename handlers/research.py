@@ -1,5 +1,5 @@
 """
-오늘의 증권사 리포트 핸들러 — /오늘리포트 + 평일 07:30 자동 발송.
+오늘의 증권사 리포트 핸들러 — /오늘리포트 + 평일 09:00 자동 발송.
 
 보유·관심 종목과 겹치는 리포트를 별표 섹션으로 위에 띄우고, 나머지는 전체 섹션에 정렬.
 """
@@ -59,7 +59,7 @@ def _format_today_research(rows: list[dict]) -> list[str]:
 
 
 async def send_daily_research():
-    """평일 07:30 자동 실행 + /오늘리포트 명령어로 수동 호출."""
+    """평일 09:00 자동 실행 + /오늘리포트 명령어로 수동 호출."""
     loop = asyncio.get_running_loop()
     try:
         rows = await loop.run_in_executor(_executor, get_today_research_sync)

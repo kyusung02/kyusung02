@@ -88,7 +88,11 @@ WATCH_CHANNELS = [ch.strip() for ch in _watch_raw.split(",") if ch.strip()]
 # 채널 요약 서비스 활성화 여부 (기본 비활성)
 # 비활성 시 user_client에 on_channel_msg 핸들러를 등록하지 않아
 # 모니터링 채널 메시지가 와도 요약 실행되지 않음. 코드/명령어는 그대로 유지.
-# 다시 켜려면: CHANNEL_SUMMARY_ENABLED=true
+# 다시 켜려면 환경변수 CHANNEL_SUMMARY_ENABLED=true 설정 후 재시작.
+#
+# ※ 이 플래그는 config.py에서 import하지 않고 utils.channel_summary_enabled()가
+#    os.environ을 직접 읽는다. 따라서 새로 추가/변경해도 VM config.py 동기화가
+#    필요 없다(2026-05-15 ImportError 사고 패턴 회피). 아래 줄은 문서용 기본값.
 CHANNEL_SUMMARY_ENABLED = os.environ.get("CHANNEL_SUMMARY_ENABLED", "false").lower() == "true"
 
 # ==========================================

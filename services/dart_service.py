@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
 from services.gemini import FINANCE_PROMPT, generate_with_retry
-from services.stock import dart, is_korean_ticker
+from services.stock import dart, is_korean_ticker, get_kr_ticker
 from services.chart import find_row, quarter_label, financial_unit
 from utils import safe_opener, kst_today
 
@@ -35,37 +35,25 @@ def _escape_md(text: str) -> str:
 
 
 def get_finance_summary_sync(company: str) -> str:
-    """DART 재무 조회 + Gemini 분석 (동기 함수)."""
-    try:
-        current_year = kst_today().year - 1
-        df = None
-        used_year = None
-        for year in (current_year, current_year - 1):
-            df = dart.finstate_all(company, year)
-            if df is not None and not df.empty:
-                used_year = year
-                break
+    """분기 재무 조회 + Gemini 분석 (동기 함수).
 
-        if df is None or df.empty:
+    FINANCE_PROMPT가 '최근 분기(Latest Q)·QoQ·TTM(Last 4Q)'를 요구하므로,
+    연간 1개 재무제표(`dart.finstate_all` 기본 reprt_code=11011=사업보고서)가 아니라
+    /report 와 동일하게 yfinance 분기 손익(quarterly_income_stmt) 데이터를 입력으로 넣는다.
+    종목명 → ticker 변환 실패 시(미상장 등) 안내 메시지 반환.
+    """
+    try:
+        ticker = get_kr_ticker(company)
+        if not ticker:
             return f"❌ '{company}'의 재무 데이터를 찾을 수 없습니다. (종목명/상장여부 확인)"
 
-        essential = df[df['account_nm'].str.contains('매출액|영업이익|당기순이익', na=False)]
-        amount_col = next(
-            (c for c in ['thstrm_amount', 'thstrm_add_amount'] if c in essential.columns),
-            None
-        )
-        if amount_col is None:
-            return f"⚠️ 분석 중 오류가 발생했습니다: 당기금액 컬럼을 찾을 수 없습니다. (컬럼: {list(essential.columns)})"
-        cols = ['account_nm', amount_col]
-        if 'frmtrm_amount' in essential.columns:
-            cols.append('frmtrm_amount')
-        data_str = essential[cols].to_string()
+        data_str = get_quarterly_financials_text_sync(ticker)
 
         today = kst_today().strftime("%Y년 %m월 %d일")
         response = generate_with_retry(
-            [FINANCE_PROMPT + f"\n\n작성일: {today}\n종목: {company}\n데이터:\n{data_str}"]
+            [FINANCE_PROMPT + f"\n\n작성일: {today}\n종목: {company} ({ticker})\n분기 손익 데이터:\n{data_str}"]
         )
-        return response.text + f"\n\n📌 출처: DART 전자공시시스템 ({used_year}년 재무제표)"
+        return response.text + "\n\n📌 출처: yfinance 분기 손익계산서 (최근 6분기 + TTM)"
     except Exception as e:
         log.warning("get_finance_summary_sync(%s) 실패: %s", company, e)
         return "⚠️ 재무 분석 중 오류가 발생했습니다."
