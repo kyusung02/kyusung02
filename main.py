@@ -34,7 +34,7 @@ from config import (
 from clients import user_client, bot_client, _executor
 from storage import (
     load_watchlist, add_to_watchlist, remove_from_watchlist,
-    load_channels, save_channels,
+    load_channels, save_channels, normalize_channel,
 )
 from services.gemini import (
     LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
@@ -346,10 +346,9 @@ async def _cmd_watchlist(event):
 async def _cmd_channel_add(event, text: str):
     ch = text.replace('/채널추가', '').strip()
     if not ch:
-        await event.reply("사용법: /채널추가 @채널유저네임")
+        await event.reply("사용법: /채널추가 @채널유저네임 (또는 비공개 채널 숫자 ID)")
         return
-    if not ch.startswith('@'):
-        ch = '@' + ch
+    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
     channels = load_channels()
     if ch in channels:
         await event.reply(f"'{ch}'은(는) 이미 모니터링 중입니다.")
@@ -366,10 +365,9 @@ async def _cmd_channel_add(event, text: str):
 async def _cmd_channel_remove(event, text: str):
     ch = text.replace('/채널삭제', '').strip()
     if not ch:
-        await event.reply("사용법: /채널삭제 @채널유저네임")
+        await event.reply("사용법: /채널삭제 @채널유저네임 (또는 비공개 채널 숫자 ID)")
         return
-    if not ch.startswith('@'):
-        ch = '@' + ch
+    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
     channels = load_channels()
     if ch not in channels:
         await event.reply(f"'{ch}'은(는) 모니터링 목록에 없습니다.")

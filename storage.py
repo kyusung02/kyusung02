@@ -45,6 +45,21 @@ def _parse_channel(ch):
         return s
 
 
+def normalize_channel(ch):
+    """사용자 입력 채널 식별자를 저장/비교 표준형으로 변환합니다.
+
+    숫자 채널 ID(예: -1001378197756)는 int 로, 그 외 유저네임은 '@' 접두어를
+    보장해 반환합니다. load_channels()가 돌려주는 _parse_channel 결과와 동일한
+    표준형이라 add/remove 시 in/remove 비교가 정확히 일치합니다.
+    숫자 ID 에 '@' 를 붙여 망가뜨리던 기존 핸들러 버그를 막습니다.
+    """
+    s = str(ch).strip()
+    try:
+        return int(s)
+    except ValueError:
+        return s if s.startswith('@') else '@' + s
+
+
 # ── 관심종목 ────────────────────────────────────────────────────────────────
 
 def load_watchlist() -> list[str]:
