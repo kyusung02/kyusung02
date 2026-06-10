@@ -12,6 +12,7 @@ from config import BROADCAST_ID
 from services.memory_spot import (
     fetch_dram_spot, fetch_memory_proxies,
     format_spot_card, format_data_block, build_memory_prompt,
+    fetch_trendforce_memory_article, fetch_article_text, build_trendforce_prompt,
 )
 from services.gemini import generate_with_retry
 from utils import kst_now
@@ -63,3 +64,21 @@ async def send_memory_briefing():
         await bot_client.send_message(
             BROADCAST_ID, "⚠️ AI 코멘트 생성 오류 — 위 현물가 데이터만 참고하세요."
         )
+
+    # 3) TrendForce 메모리 현물가 기사 요약 (보조 — 실패/없으면 조용히 생략)
+    try:
+        art = await loop.run_in_executor(_executor, fetch_trendforce_memory_article)
+        if not art:
+            return
+        body = await loop.run_in_executor(_executor, fetch_article_text, art["url"])
+        if not body:
+            return
+        tprompt = build_trendforce_prompt(body, art["date"])
+        tresp = await loop.run_in_executor(_executor, generate_with_retry, [tprompt])
+        # Gemini 출력은 plain 전송(md 파싱 실패로 메시지 통째 누락되는 것 방지). URL은 자동 링크됨.
+        msg = (f"📰 TrendForce 메모리 동향 ({art['date']})\n\n"
+               f"{tresp.text}\n\n🔗 {art['url']}")
+        await bot_client.send_message(BROADCAST_ID, msg, link_preview=False)
+        log.info("TrendForce 기사 요약 전송 완료")
+    except Exception as e:
+        log.warning("TrendForce 기사 요약 실패(생략): %s", e)

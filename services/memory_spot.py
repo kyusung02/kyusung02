@@ -23,6 +23,7 @@ from services.semi import _safe_close_series, _pct_change
 log = logging.getLogger(__name__)
 
 DRAMX_URL = "https://www.dramexchange.com/"
+TRENDFORCE_LIST_URL = "https://www.trendforce.com/news/"
 
 # (raw 페이지 제품명 부분일치 키, 표시 라벨, 카테고리) — 큐레이션한 벤치마크 품목.
 SPOT_ITEMS = [
@@ -167,6 +168,82 @@ def format_data_block(spot: list[dict], proxies: list[dict]) -> str:
         for p in proxies:
             lines.append(f"{p['name']}: {p['chg_pct']:+.2f}%")
     return "\n".join(lines)
+
+
+# ── TrendForce 메모리 기사(보조) ────────────────────────────────────────────
+# 기사 URL이 /news/YYYY/MM/DD/<slug>/ 라 날짜·제목을 경로에서 결정론적으로 얻는다.
+_TF_ART_URL = re.compile(r'https://www\.trendforce\.com/news/(\d{4})/(\d{2})/(\d{2})/([a-z0-9\-]+)/')
+_TF_MEMORY_KW = ('spot-price', 'memory-price', 'memory-cost', 'dram', 'nand', 'ddr', 'hbm', 'memory')
+_TF_SCRIPT = re.compile(r'<(script|style)[^>]*>.*?</\1>', re.S | re.I)
+_TF_TAG = re.compile(r'<[^>]+>')
+
+
+def fetch_trendforce_memory_article() -> dict | None:
+    """TrendForce 뉴스 목록에서 최신 메모리 현물가 기사 1건 선정 → {url, date, slug}.
+
+    1순위: 'spot-price' 정기 시리즈, 2순위: 메모리 키워드 기사. 동률이면 최신 날짜.
+    못 찾거나 실패하면 None(보조 기능이라 호출측이 조용히 생략).
+    """
+    try:
+        req = urllib.request.Request(TRENDFORCE_LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            html = resp.read().decode("utf-8", "ignore")
+    except Exception as e:
+        log.warning("TrendForce 목록 fetch 실패: %s", e)
+        return None
+
+    seen, arts = set(), []
+    for m in _TF_ART_URL.finditer(html):
+        url = m.group(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        arts.append({"url": url, "date": f"{m.group(1)}-{m.group(2)}-{m.group(3)}", "slug": m.group(4)})
+    if not arts:
+        log.warning("TrendForce 기사 URL 파싱 0건 — 목록 구조 변경 의심")
+        return None
+
+    spot = [a for a in arts if "spot-price" in a["slug"]]
+    mem = [a for a in arts if any(k in a["slug"] for k in _TF_MEMORY_KW)]
+    pool = spot or mem
+    if not pool:
+        return None
+    pool.sort(key=lambda a: a["date"], reverse=True)
+    return pool[0]
+
+
+def fetch_article_text(url: str, max_len: int = 9000) -> str:
+    """기사 본문 텍스트 추출 — script/style 내용 제거 후 태그 제거(요약 노이즈 최소화). 실패 시 ''.
+
+    앞부분에 사이트 내비게이션 메뉴(~2.5천자)가 붙으므로 넉넉히 자른다(본문이 잘리지 않게).
+    프롬프트에서 메뉴/광고 텍스트는 무시하도록 지시한다.
+    """
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            html = resp.read().decode("utf-8", "ignore")
+    except Exception as e:
+        log.warning("TrendForce 기사 fetch 실패(%s): %s", url, e)
+        return ""
+    html = _TF_SCRIPT.sub(" ", html)
+    text = _html.unescape(re.sub(r"\s+", " ", _TF_TAG.sub(" ", html))).strip()
+    return text[:max_len]
+
+
+def build_trendforce_prompt(article_text: str, date_str: str) -> str:
+    """TrendForce 기사 한국어 요약 프롬프트. 본문을 구획으로 감싸 인젝션 영향 완화."""
+    return f"""당신은 메모리 반도체 시장 애널리스트입니다. 아래는 TrendForce 메모리 현물가 동향
+기사({date_str})에서 추출한 텍스트입니다(내비게이션·광고 텍스트가 섞일 수 있음).
+
+<<<ARTICLE_START>>>
+{article_text}
+<<<ARTICLE_END>>>
+
+위 기사의 핵심을 한국어로 3~4줄 요약하세요:
+- DRAM(DDR5/DDR4/DDR3) 현물 흐름
+- NAND 동향(있으면)
+- 가격 방향성과 원인(수급)
+불릿 위주, 핵심만. 기사에 없는 내용은 생성 금지. 광고·메뉴 텍스트는 무시하세요."""
 
 
 def build_memory_prompt(data_block: str, today_str: str) -> str:
