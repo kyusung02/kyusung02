@@ -49,6 +49,7 @@ from handlers.dart import check_dart_watchlist
 from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
 from handlers.semi import send_semi_briefing
+from handlers.memory import send_memory_briefing
 from handlers.report import handle_report
 from handlers.research import send_daily_research
 from handlers.life import send_weekly_info
@@ -100,6 +101,12 @@ async def on_bot_msg(event):
     if text in ('/semi', '/반도체'):
         await event.respond("🔬 반도체 업황 스크리닝 중... (약 20~30초 소요)")
         await send_semi_briefing()
+        return
+
+    # ── 메모리 현물가 (DRAM/NAND) ───────────────────────────────────────────
+    if text in ('/메모리', '/memory'):
+        await event.respond("💾 메모리 현물가 수집 중...")
+        await send_memory_briefing()
         return
 
     # ── 오늘의 증권사 리포트 ────────────────────────────────────────────────
@@ -506,6 +513,8 @@ _HELP_TEXT = (
     "    ※ 평일 10/12/14/16시(:05) 자동 발송\n"
     "  `/semi` (또는 `/반도체`) — 반도체 업황 스크리닝 (한·미 메모리·장비·빅테크 CAPEX)\n"
     "    ※ 매주 월 08:00 자동 발송\n"
+    "  `/메모리` — DRAM/NAND 현물가 (DRAMeXchange) + 메모리주 프록시\n"
+    "    ※ 화~금 08:00 자동 발송\n"
     "  `/오늘리포트` — 오늘 발행된 국내 증권사 리포트 모아보기 (보유·관심 종목 ⭐)\n"
     "    ※ 평일 09:00 자동 발송\n\n"
     "🏠 **생활 브리핑**\n"
@@ -616,6 +625,12 @@ async def main():
     scheduler.add_job(
         send_semi_briefing, 'cron',
         day_of_week='mon', hour=8, minute=0,
+    )
+
+    # 메모리 현물가(DRAM/NAND): 화~금 08:00 KST. 월요일은 반도체 브리핑이 커버하므로 제외.
+    scheduler.add_job(
+        send_memory_briefing, 'cron',
+        day_of_week='tue-fri', hour=8, minute=0,
     )
 
     scheduler.start()
