@@ -32,6 +32,32 @@ def channel_summary_enabled() -> bool:
     return os.environ.get("CHANNEL_SUMMARY_ENABLED", "false").strip().lower() == "true"
 
 
+_HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL", "").strip()
+
+
+def healthcheck_enabled() -> bool:
+    """외부 데드맨 스위치(healthchecks.io 등) 활성화 여부 — env에서 직접 판독.
+
+    config.py import 없이 os.environ을 직접 읽는다(2026-05-15 ImportError 사고 패턴 회피).
+    활성화: 환경변수 HEALTHCHECK_URL=https://hc-ping.com/<uuid>.
+    """
+    return bool(_HEALTHCHECK_URL)
+
+
+def ping_healthcheck() -> None:
+    """외부 모니터에 '살아있음' 신호를 보낸다(블로킹 — executor에서 호출).
+
+    URL은 신뢰된 자체 env 값이라 SSRF 검사 불필요. 실패는 조용히 무시(다음 주기 재시도).
+    핑이 멈추면 외부 모니터가 grace 경과 후 알림 → 봇/VM 전체 다운까지 감지(self-ping의 한계 보완).
+    """
+    if not _HEALTHCHECK_URL:
+        return
+    try:
+        urllib.request.urlopen(_HEALTHCHECK_URL, timeout=10)
+    except Exception as e:
+        log.debug("healthcheck ping 실패: %s", e)
+
+
 log = logging.getLogger(__name__)
 
 MAX_TG_MESSAGE_LEN = 4096

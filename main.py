@@ -60,7 +60,10 @@ from handlers.alerts import (
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
 from handlers.earnings import handle_earnings, check_and_notify_imminent_earnings
-from utils import extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today, channel_summary_enabled
+from utils import (
+    extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today,
+    channel_summary_enabled, healthcheck_enabled, ping_healthcheck,
+)
 from youtube_transcript_api import YouTubeTranscriptApi
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -528,6 +531,20 @@ _START_RETRIES = 5
 _START_RETRY_DELAY = 2
 
 
+async def _heartbeat():
+    """외부 데드맨 스위치 ping. 봇이 실제로 연결돼 있을 때만 보낸다.
+
+    bot_client가 끊겼거나(또는 프로세스/VM이 죽으면) ping이 멈추고, 외부 모니터가
+    grace 경과 후 알림을 보낸다 → OOM으로 VM이 먹통(SSH도 불가, 인스턴스는 RUNNING)인
+    상황까지 감지. 블로킹 HTTP는 executor에서 돌려 이벤트 루프를 막지 않는다.
+    """
+    if not bot_client.is_connected():
+        log.warning("healthcheck: bot_client 연결 끊김 — ping 생략(모니터가 down 감지하도록)")
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_executor, ping_healthcheck)
+
+
 async def main():
     """봇 진입점.
 
@@ -602,6 +619,15 @@ async def main():
     )
 
     scheduler.start()
+
+    # 외부 데드맨 스위치(healthchecks.io 등): 2분마다 ping. grace(15~20분)보다 충분히 짧게.
+    # HEALTHCHECK_URL 미설정 시 비활성 — 봇 동작에 무영향.
+    if healthcheck_enabled():
+        scheduler.add_job(_heartbeat, 'interval', minutes=2)
+        await _heartbeat()  # 시작 즉시 1회 — 모니터 'last ping' 빠른 확인용
+        log.info("Healthcheck 활성 — 2분마다 외부 모니터에 ping")
+    else:
+        log.info("Healthcheck 비활성 (HEALTHCHECK_URL 미설정)")
 
     await bot_client.send_message(MY_TELEGRAM_ID,
         "🚀 **네모 봇 올인원 엔진 정상 가동!**\n\n"
