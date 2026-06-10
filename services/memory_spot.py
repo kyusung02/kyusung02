@@ -135,7 +135,7 @@ def _fmt_pct(it: dict) -> str:
 def format_spot_card(spot: list[dict], proxies: list[dict], now: datetime) -> str:
     """Telegram용 결정론적 가격 카드(순수 함수 — 테스트 가능)."""
     lines = [
-        "💾 **메모리 현물가** (DRAMeXchange)",
+        "🖥️ **메모리 현물가** (DRAMeXchange)",
         f"📅 {now.strftime('%Y.%m.%d')} {_WEEKDAY_KR[now.weekday()]}  {now.strftime('%H:%M')}",
         "※ 현물가=소량 현물시장 시세(계약가와 별개), 단위 USD",
     ]

@@ -105,7 +105,7 @@ async def on_bot_msg(event):
 
     # ── 메모리 현물가 (DRAM/NAND) ───────────────────────────────────────────
     if text in ('/메모리', '/memory'):
-        await event.respond("💾 메모리 현물가 수집 중...")
+        await event.respond("🖥️ 메모리 현물가 수집 중...")
         await send_memory_briefing()
         return
 
