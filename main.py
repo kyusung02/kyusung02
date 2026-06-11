@@ -85,6 +85,14 @@ os.makedirs(CHARTS_DIR, exist_ok=True)
 @bot_client.on(events.NewMessage())
 async def on_bot_msg(event):
     """봇에게 전달되는 메시지를 명령어별 분기로 처리. 본인 계정만 응답."""
+    # /id 는 본인 챗 제한 없이 어디서든 응답 — 비공개 채널의 숫자 ID 확인용
+    # (포워딩 대상 설정 시 필요. 챗 ID 자체는 민감정보가 아님)
+    if (event.text or '').strip() == '/id':
+        try:
+            await event.reply(f"이 채팅의 ID: `{event.chat_id}`")
+        except Exception as e:
+            log.warning("/id 응답 실패 (chat=%s): %s", event.chat_id, e)
+        return
     if event.chat_id != MY_TELEGRAM_ID:
         return
     text = event.text or ''
