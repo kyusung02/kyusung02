@@ -7,9 +7,8 @@ import asyncio
 from telethon import events
 from clients import bot_client, user_client, _executor
 from config import MY_TELEGRAM_ID, DOWNLOAD_DIR
-from services.gemini import (
-    LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
-)
+from services.gemini import analyze_pdf, summarize_text
+from storage import load_channels, save_channels, normalize_channel
 from utils import extract_youtube_id, fetch_webpage_text, channel_summary_enabled
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -33,11 +32,54 @@ async def update_channel_handler(channels: list):
         log.info("모니터링 채널 없음 — 핸들러 비활성화")
 
 
-def _summarize_external(prompt_body: str) -> str:
-    """LINK_PROMPT + 외부 콘텐츠 구획 → Gemini 호출 (동기)."""
-    contents = [LINK_PROMPT + "\n\n" + _wrap_external(prompt_body)]
-    response = generate_with_retry(contents)
-    return response.text
+async def handle_channel_add(event, text: str):
+    """`/채널추가` — 모니터링 채널 등록 + 핸들러 재등록."""
+    ch = text.replace('/채널추가', '').strip()
+    if not ch:
+        await event.reply("사용법: /채널추가 @채널유저네임 (또는 비공개 채널 숫자 ID)")
+        return
+    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
+    channels = load_channels()
+    if ch in channels:
+        await event.reply(f"'{ch}'은(는) 이미 모니터링 중입니다.")
+        return
+    channels.append(ch)
+    save_channels(channels)
+    await update_channel_handler(channels)
+    await event.reply(
+        f"✅ '{ch}' 모니터링 채널에 추가됐습니다. (총 {len(channels)}개)\n\n"
+        "⚠️ user_client 계정이 해당 채널에 가입되어 있어야 합니다."
+    )
+
+
+async def handle_channel_remove(event, text: str):
+    """`/채널삭제` — 모니터링 채널 해제 + 핸들러 재등록."""
+    ch = text.replace('/채널삭제', '').strip()
+    if not ch:
+        await event.reply("사용법: /채널삭제 @채널유저네임 (또는 비공개 채널 숫자 ID)")
+        return
+    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
+    channels = load_channels()
+    if ch not in channels:
+        await event.reply(f"'{ch}'은(는) 모니터링 목록에 없습니다.")
+        return
+    channels.remove(ch)
+    save_channels(channels)
+    await update_channel_handler(channels)
+    await event.reply(f"🗑️ '{ch}' 모니터링 채널에서 삭제됐습니다. (총 {len(channels)}개)")
+
+
+async def handle_channel_list(event):
+    """`/채널목록` — 모니터링 채널 목록."""
+    channels = load_channels()
+    if not channels:
+        await event.reply("📡 모니터링 채널이 없습니다.\n\n/채널추가 @채널유저네임  →  추가")
+        return
+    msg = f"📡 **모니터링 채널 ({len(channels)}개)**\n\n"
+    for i, ch in enumerate(channels, 1):
+        msg += f"{i}. {ch}\n"
+    msg += "\n/채널추가 @유저네임  →  추가\n/채널삭제 @유저네임  →  삭제"
+    await event.reply(msg)
 
 
 async def on_channel_msg(event):
@@ -74,7 +116,7 @@ async def on_channel_msg(event):
                     lambda: YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
                 )
                 transcript = ' '.join(s['text'] for s in segments)
-                summary = await loop.run_in_executor(_executor, _summarize_external, transcript)
+                summary = await loop.run_in_executor(_executor, summarize_text, transcript)
                 await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{summary}")
             except Exception as e:
                 log.warning("YouTube 자막/요약 실패 (%s): %s", yt_url, e)
@@ -98,7 +140,7 @@ async def on_channel_msg(event):
             )
             return
         try:
-            summary = await loop.run_in_executor(_executor, _summarize_external, text)
+            summary = await loop.run_in_executor(_executor, summarize_text, text)
             await bot_client.send_message(MY_TELEGRAM_ID, f"{source_header}\n\n{summary}")
         except Exception as e:
             log.warning("URL 요약 실패 (%s): %s", urls[0], e)

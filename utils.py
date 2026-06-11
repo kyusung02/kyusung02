@@ -3,6 +3,7 @@
 """
 import os
 import re
+import time
 import ipaddress
 import socket
 import logging
@@ -10,6 +11,8 @@ import urllib.request
 import urllib.parse
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
+
+log = logging.getLogger(__name__)
 
 KST = ZoneInfo('Asia/Seoul')
 
@@ -57,8 +60,6 @@ def ping_healthcheck() -> None:
     except Exception as e:
         log.debug("healthcheck ping 실패: %s", e)
 
-
-log = logging.getLogger(__name__)
 
 MAX_TG_MESSAGE_LEN = 4096
 
@@ -129,6 +130,34 @@ def is_url_safe(url: str) -> bool:
         if _is_private_ip(ip):
             return False
     return True
+
+
+class PendingStore:
+    """inline 버튼 확인 대기 항목 저장소 — TTL 경과 항목은 접근 시 자동 청소.
+
+    봇 메모리에만 보관(재시작 시 사라짐, 영속화 불필요).
+    /거래·/알림의 확인 버튼 대기처럼 짧게 살다 사라지는 항목용.
+    """
+
+    def __init__(self, ttl_sec: int = 300):
+        self.ttl_sec = ttl_sec
+        self._items: dict[str, dict] = {}
+
+    def _cleanup(self) -> None:
+        now = time.time()
+        expired = [k for k, v in self._items.items() if now - v.get('_ts', 0) > self.ttl_sec]
+        for k in expired:
+            self._items.pop(k, None)
+
+    def put(self, key: str, value: dict) -> None:
+        self._cleanup()
+        value['_ts'] = time.time()
+        self._items[key] = value
+
+    def pop(self, key: str) -> dict | None:
+        """키 항목 반환+제거. 없거나 만료됐으면 None."""
+        self._cleanup()
+        return self._items.pop(key, None)
 
 
 _SAFE_FILENAME_RE = re.compile(r'[^0-9A-Za-z가-힣._-]+')

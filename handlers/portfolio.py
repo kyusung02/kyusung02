@@ -8,7 +8,6 @@
 평가는 services.portfolio.evaluate_portfolio 에 위임 (yfinance 호출 → executor).
 """
 import re
-import time
 import uuid
 import logging
 import asyncio
@@ -20,7 +19,7 @@ from storage import (
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.portfolio import evaluate_portfolio, format_portfolio_message
-from utils import kst_today
+from utils import kst_today, PendingStore
 from services.gemini import parse_trade_intent
 
 log = logging.getLogger(__name__)
@@ -135,15 +134,7 @@ async def handle_portfolio(event):
 # ── 자연어 거래 (/거래) + Inline Button 확인 ──────────────────────────────────
 # 봇 메모리에만 보관 (재시작 시 사라짐, 5분 timeout). 영속화 불필요.
 
-_PENDING_TRADES: dict[str, dict] = {}
-_PENDING_TTL_SEC = 300
-
-
-def _cleanup_pending():
-    now = time.time()
-    expired = [k for k, v in _PENDING_TRADES.items() if now - v.get('_ts', 0) > _PENDING_TTL_SEC]
-    for k in expired:
-        _PENDING_TRADES.pop(k, None)
+_pending_trades = PendingStore(ttl_sec=300)
 
 
 def _format_pending_summary(p: dict) -> str:
@@ -218,7 +209,7 @@ async def handle_trade(event, args_text: str):
         )
         return
 
-    parsed.update({'ticker': ticker, 'market': market, 'display': display, '_ts': time.time()})
+    parsed.update({'ticker': ticker, 'market': market, 'display': display})
 
     if parsed['action'] == 'buy':
         if not parsed.get('shares') or not parsed.get('price'):
@@ -226,9 +217,8 @@ async def handle_trade(event, args_text: str):
             return
         parsed['trade_date'] = parsed.get('trade_date') or kst_today().isoformat()
 
-    _cleanup_pending()
     trade_id = uuid.uuid4().hex[:12]
-    _PENDING_TRADES[trade_id] = parsed
+    _pending_trades.put(trade_id, parsed)
 
     await notice.edit(
         _format_pending_summary(parsed),
@@ -249,7 +239,7 @@ async def on_trade_callback(event):
     data = event.data.decode()
     is_confirm = data.startswith('trade_confirm:')
     trade_id = data.split(':', 1)[1]
-    pending = _PENDING_TRADES.pop(trade_id, None)
+    pending = _pending_trades.pop(trade_id)
 
     if pending is None:
         await event.answer("⏰ 만료된 거래입니다", alert=True)

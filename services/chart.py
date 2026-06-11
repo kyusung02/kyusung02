@@ -37,110 +37,69 @@ def financial_unit(ticker: str) -> tuple[float, str]:
     return 1e9, 'B$'
 
 
+# 캔들/거래량 색 — 국내 관례(상승 빨강, 하락 파랑). 변경 시 여기만 수정.
+_CANDLE_UP   = '#d32f2f'
+_CANDLE_DOWN = '#1976d2'
+
+# (period, interval, 날짜 포맷, 장기 MA, 제목 접미사) — 일봉 3개월 / 주봉 5년 공통 스펙
+_PRICE_CHART_SPECS = [
+    ('3mo', '1d',  '%m/%d', 60,  'Daily (3M)'),
+    ('5y',  '1wk', '%Y/%m', 200, 'Weekly (5Y)'),
+]
+
+
+def _draw_price_volume(df, title: str, date_fmt: str, ylabel: str, ma_long: int, path: str):
+    """가격(MA 5/20/장기) + 거래량 2단 차트 저장 — KR/US 일봉·주봉 공용."""
+    df = df.copy()
+    df['MA_S'] = df['Close'].rolling(5).mean()
+    df['MA_M'] = df['Close'].rolling(20).mean()
+    df['MA_L'] = df['Close'].rolling(ma_long).mean()
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
+                                    gridspec_kw={'height_ratios': [3, 1]})
+    fig.suptitle(title, fontsize=13)
+    ax1.plot(df.index, df['Close'], linewidth=1.5, color='#1f77b4', label='Close')
+    ax1.plot(df.index, df['MA_S'], linewidth=1, color='orange', alpha=0.9, label='MA5')
+    ax1.plot(df.index, df['MA_M'], linewidth=1, color='green',  alpha=0.9, label='MA20')
+    ax1.plot(df.index, df['MA_L'], linewidth=1, color='red',    alpha=0.9, label=f'MA{ma_long}')
+    ax1.legend(loc='upper left', fontsize=8)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
+    ax1.set_ylabel(ylabel)
+    ax1.grid(True, alpha=0.3)
+
+    colors = [_CANDLE_UP if c >= o else _CANDLE_DOWN
+              for c, o in zip(df['Close'], df['Open'])]
+    ax2.bar(df.index, df['Volume'], color=colors, alpha=0.7)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
+    ax2.set_ylabel('Volume')
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+
+
 def _draw_chart_kr(ticker: str, company: str, path_daily: str, path_weekly: str):
     """일봉(3개월) + 주봉(5년) 차트 파일 저장 (동기 함수 - executor에서 실행)"""
     stock = yf.Ticker(ticker)
-
-    df_d = stock.history(period='3mo')
-    if not df_d.empty:
-        df_d['MA5']  = df_d['Close'].rolling(5).mean()
-        df_d['MA20'] = df_d['Close'].rolling(20).mean()
-        df_d['MA60'] = df_d['Close'].rolling(60).mean()
-
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
-                                        gridspec_kw={'height_ratios': [3, 1]})
-        fig.suptitle(f'{company} Daily Chart (3M)', fontsize=13)
-        ax1.plot(df_d.index, df_d['Close'], linewidth=1.5, color='#1f77b4', label='Close')
-        ax1.plot(df_d.index, df_d['MA5'],  linewidth=1, color='orange', alpha=0.9, label='MA5')
-        ax1.plot(df_d.index, df_d['MA20'], linewidth=1, color='green',  alpha=0.9, label='MA20')
-        ax1.plot(df_d.index, df_d['MA60'], linewidth=1, color='red',    alpha=0.9, label='MA60')
-        ax1.legend(loc='upper left', fontsize=8)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        ax1.set_ylabel('Price (KRW)')
-        ax1.grid(True, alpha=0.3)
-
-        colors = ['#d32f2f' if c >= o else '#1976d2'
-                  for c, o in zip(df_d['Close'], df_d['Open'])]
-        ax2.bar(df_d.index, df_d['Volume'], color=colors, alpha=0.7)
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        ax2.set_ylabel('Volume')
-        ax2.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(path_daily, dpi=100, bbox_inches='tight')
-        plt.close()
-
-    df_w = stock.history(period='5y', interval='1wk')
-    if not df_w.empty:
-        df_w['MA5']   = df_w['Close'].rolling(5).mean()
-        df_w['MA20']  = df_w['Close'].rolling(20).mean()
-        df_w['MA200'] = df_w['Close'].rolling(200).mean()
-
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
-                                        gridspec_kw={'height_ratios': [3, 1]})
-        fig.suptitle(f'{company} Weekly Chart (5Y)', fontsize=13)
-        ax1.plot(df_w.index, df_w['Close'], linewidth=1.5, color='#1f77b4', label='Close')
-        ax1.plot(df_w.index, df_w['MA5'],   linewidth=1, color='orange', alpha=0.9, label='MA5')
-        ax1.plot(df_w.index, df_w['MA20'],  linewidth=1, color='green',  alpha=0.9, label='MA20')
-        ax1.plot(df_w.index, df_w['MA200'], linewidth=1, color='red',    alpha=0.9, label='MA200')
-        ax1.legend(loc='upper left', fontsize=8)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m'))
-        ax1.set_ylabel('Price (KRW)')
-        ax1.grid(True, alpha=0.3)
-
-        colors = ['#d32f2f' if c >= o else '#1976d2'
-                  for c, o in zip(df_w['Close'], df_w['Open'])]
-        ax2.bar(df_w.index, df_w['Volume'], color=colors, alpha=0.7)
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m'))
-        ax2.set_ylabel('Volume')
-        ax2.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(path_weekly, dpi=100, bbox_inches='tight')
-        plt.close()
+    for (period, interval, fmt, ma_long, suffix), path in zip(
+            _PRICE_CHART_SPECS, [path_daily, path_weekly]):
+        df = stock.history(period=period, interval=interval)
+        if df.empty:
+            continue
+        _draw_price_volume(df, f'{company} {suffix}', fmt, 'Price (KRW)', ma_long, path)
 
 
 def _draw_chart_us(ticker_raw: str, path_daily: str, path_weekly: str):
     """미국 종목 일봉(3개월) + 주봉(5년) 차트 저장 (동기 함수 - executor에서 실행)"""
     ticker = US_STOCK_MAP.get(ticker_raw.lower(), US_STOCK_MAP.get(ticker_raw, ticker_raw.upper()))
     stock  = yf.Ticker(ticker)
-
-    for period, interval, path, fmt, title_suffix in [
-        ('3mo', '1d',  path_daily,  '%m/%d',  'Daily (3M)'),
-        ('5y',  '1wk', path_weekly, '%Y/%m',  'Weekly (5Y)'),
-    ]:
+    for (period, interval, fmt, ma_long, suffix), path in zip(
+            _PRICE_CHART_SPECS, [path_daily, path_weekly]):
         df = stock.history(period=period, interval=interval)
         if df.empty:
             continue
-        ma_short = 5
-        ma_mid   = 20
-        ma_long  = 60 if interval == '1d' else 200
-        df['MA_S'] = df['Close'].rolling(ma_short).mean()
-        df['MA_M'] = df['Close'].rolling(ma_mid).mean()
-        df['MA_L'] = df['Close'].rolling(ma_long).mean()
-
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
-                                        gridspec_kw={'height_ratios': [3, 1]})
-        fig.suptitle(f'{ticker} {title_suffix}', fontsize=13)
-        ax1.plot(df.index, df['Close'], linewidth=1.5, color='#1f77b4', label='Close')
-        ax1.plot(df.index, df['MA_S'], linewidth=1, color='orange', alpha=0.9, label=f'MA{ma_short}')
-        ax1.plot(df.index, df['MA_M'], linewidth=1, color='green',  alpha=0.9, label=f'MA{ma_mid}')
-        ax1.plot(df.index, df['MA_L'], linewidth=1, color='red',    alpha=0.9, label=f'MA{ma_long}')
-        ax1.legend(loc='upper left', fontsize=8)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
-        ax1.set_ylabel('Price (USD)')
-        ax1.grid(True, alpha=0.3)
-
-        colors = ['#d32f2f' if c >= o else '#1976d2'
-                  for c, o in zip(df['Close'], df['Open'])]
-        ax2.bar(df.index, df['Volume'], color=colors, alpha=0.7)
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
-        ax2.set_ylabel('Volume')
-        ax2.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(path, dpi=100, bbox_inches='tight')
-        plt.close()
+        _draw_price_volume(df, f'{ticker} {suffix}', fmt, 'Price (USD)', ma_long, path)
 
 
 def _draw_chart_financials(ticker_sym: str, company: str, path: str):

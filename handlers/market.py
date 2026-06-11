@@ -15,27 +15,28 @@ from services.earnings import get_upcoming_earnings_for, format_upcoming_briefin
 
 log = logging.getLogger(__name__)
 
+# 모닝 시황이 조회하는 지표 목록 — 추가/삭제는 여기서만
+_MORNING_TICKERS = {
+    'S&P 500':  '^GSPC',
+    'NASDAQ':   '^IXIC',
+    'DOW':      '^DJI',
+    'KOSPI':    '^KS11',
+    'KOSDAQ':   '^KQ11',
+    '금(Gold)': 'GC=F',
+    'WTI':      'CL=F',
+    '미국 2Y':  '^IRX',
+    '미국 10Y': '^TNX',
+    'VIX':      '^VIX',
+    'BTC':      'BTC-USD',
+    '필라델피아 SOX': '^SOX',
+    '반도체 ETF SMH': 'SMH',
+}
+
 
 def _fetch_us_morning_data() -> str:
     """yfinance로 글로벌 시장 주요 지표 수집 (동기 함수 - executor에서 실행)"""
-    TICKERS = {
-        'S&P 500':  '^GSPC',
-        'NASDAQ':   '^IXIC',
-        'DOW':      '^DJI',
-        'KOSPI':    '^KS11',
-        'KOSDAQ':   '^KQ11',
-        '금(Gold)': 'GC=F',
-        'WTI':      'CL=F',
-        '미국 2Y':  '^IRX',
-        '미국 10Y': '^TNX',
-        'VIX':      '^VIX',
-        'BTC':      'BTC-USD',
-        '필라델피아 SOX': '^SOX',
-        '반도체 ETF SMH': 'SMH',
-    }
-
     lines = []
-    for name, sym in TICKERS.items():
+    for name, sym in _MORNING_TICKERS.items():
         try:
             hist = yf.Ticker(sym).history(period='2d')
             if hist.empty or len(hist) < 1:

@@ -15,6 +15,8 @@ storage.py              ← JSON 파일 기반 영속 데이터 (watchlist, port
 utils.py                ← reply_chunked, YouTube/웹 유틸
 
 handlers/
+  finance.py            ← 종목 조회 명령 (/재무 /us /공시 /watchlist)
+  media.py              ← 봇 채팅 직접 입력 (PDF 분석, URL 요약)
   market.py             ← 모닝 시황 (send_us_morning)
   sector.py             ← 국내 섹터 브리핑 (send_kr_sector_briefing)
   semi.py               ← 반도체 업황 스크리닝 (send_semi_briefing)
@@ -25,7 +27,7 @@ handlers/
   alerts.py             ← 가격·이벤트 알림 (handle_alert_*)
   portfolio.py          ← 포트폴리오 관리 (handle_buy/sell/portfolio/trade)
   life.py               ← 생활 브리핑 (send_weekly_info — 장보기, 나들이)
-  channel.py            ← 채널 모니터링·자동 요약
+  channel.py            ← 채널 모니터링·자동 요약 + /채널추가·삭제·목록
   forward.py            ← 채널 포워딩 (지정 소스 채널 → 내 채널, 원문 그대로)
 
 services/
@@ -87,7 +89,8 @@ conftest.py             ← 테스트용 config 스텁 (DATA_DIR→임시폴더,
 3. 기존 코드와 충돌 여부 확인
 4. `python -m py_compile`로 문법 검사
 5. 알림 판정·매매 기록·평가 로직 수정 시 `python -m pytest tests/ -q` 실행
-6. 검토 결과를 한국어로 요약
+6. import 구조(모듈 이동·분리) 변경 시 `python tests/smoke_import.py`로 전체 모듈 그래프 import 검증
+7. 검토 결과를 한국어로 요약
 
 ### 추가 규칙
 - `handlers/` 수정 시 `main.py`의 라우팅·import 연결 확인

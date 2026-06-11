@@ -1,6 +1,5 @@
 """네모 봇 (Nemo Bot) — 텔레그램 올인원 자동화 봇"""
 import os
-import re
 import sys
 import asyncio
 import logging
@@ -32,23 +31,16 @@ from config import (
     DOWNLOAD_DIR, CHARTS_DIR, DART_ALERT_KEYWORDS,
 )
 from clients import user_client, bot_client, _executor
-from storage import (
-    load_watchlist, add_to_watchlist, remove_from_watchlist,
-    load_channels, save_channels, normalize_channel, load_forward_config,
+from storage import add_to_watchlist, remove_from_watchlist, load_channels, load_forward_config
+from handlers.channel import (
+    on_channel_msg, handle_channel_add, handle_channel_remove, handle_channel_list,
 )
-from services.gemini import (
-    LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
-)
-from services.stock import (
-    get_kr_ticker, get_us_report_text, get_price_info_kr, US_STOCK_MAP, dart,
-)
-from services.chart import _draw_chart_kr, _draw_chart_us, _draw_chart_financials
-from services.dart_service import DART_FILING_URL, get_finance_summary_sync, get_dart_recent_filings_sync
-from handlers.channel import on_channel_msg, update_channel_handler
 from handlers.forward import (
     on_forward_msg, handle_forward_target,
     handle_forward_add, handle_forward_remove, handle_forward_list,
 )
+from handlers.finance import handle_finance, handle_us, handle_dart_filings, handle_watchlist
+from handlers.media import handle_pdf, handle_url
 from handlers.dart import check_dart_watchlist
 from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
@@ -65,12 +57,7 @@ from handlers.alerts import (
 )
 # on_alert_callback 데코레이터도 handlers.alerts import 시점에 bot_client 에 자동 등록.
 from handlers.earnings import handle_earnings, check_and_notify_imminent_earnings
-from utils import (
-    extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today,
-    channel_summary_enabled, healthcheck_enabled, ping_healthcheck,
-    safe_filename, cleanup_files,
-)
-from youtube_transcript_api import YouTubeTranscriptApi
+from utils import channel_summary_enabled, healthcheck_enabled, ping_healthcheck
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -96,7 +83,6 @@ async def on_bot_msg(event):
     if event.chat_id != MY_TELEGRAM_ID:
         return
     text = event.text or ''
-    loop = asyncio.get_running_loop()
 
     # ── 시황 ────────────────────────────────────────────────────────────────
     if text == '/시황':
@@ -144,7 +130,7 @@ async def on_bot_msg(event):
         if not comp:
             await event.reply("사용법: /재무 삼성전자")
             return
-        await _cmd_finance(event, comp, loop)
+        await handle_finance(event, comp)
         return
 
     # ── 생활 브리핑 ─────────────────────────────────────────────────────────
@@ -161,7 +147,7 @@ async def on_bot_msg(event):
         if not query:
             await event.reply("사용법: /us NVDA")
             return
-        await _cmd_us(event, query, loop)
+        await handle_us(event, query)
         return
 
     # ── DART 공시 ───────────────────────────────────────────────────────────
@@ -170,7 +156,7 @@ async def on_bot_msg(event):
         if not comp:
             await event.reply("사용법: /공시 삼성전자")
             return
-        await _cmd_dart_filings(event, comp, loop)
+        await handle_dart_filings(event, comp)
         return
 
     # ── 포트폴리오 (보유 종목) ──────────────────────────────────────────────
@@ -214,7 +200,7 @@ async def on_bot_msg(event):
     # 주의: /unwatch는 반드시 /watchlist 보다 뒤에 두지 말고, 공백 필수로 처리해
     # /unwatchlist 등의 명령이 잘못 매칭되지 않도록 한다.
     if text == '/watchlist':
-        await _cmd_watchlist(event)
+        await handle_watchlist(event)
         return
 
     if text.startswith('/watch ') and not text.startswith('/watchlist'):
@@ -245,15 +231,15 @@ async def on_bot_msg(event):
 
     # ── 채널 관리 ────────────────────────────────────────────────────────────
     if text.startswith('/채널추가'):
-        await _cmd_channel_add(event, text)
+        await handle_channel_add(event, text)
         return
 
     if text.startswith('/채널삭제'):
-        await _cmd_channel_remove(event, text)
+        await handle_channel_remove(event, text)
         return
 
     if text == '/채널목록':
-        await _cmd_channel_list(event)
+        await handle_channel_list(event)
         return
 
     # ── 채널 포워딩 ──────────────────────────────────────────────────────────
@@ -277,214 +263,12 @@ async def on_bot_msg(event):
 
     # ── 봇 채팅창: PDF 첨부 직접 분석 ────────────────────────────────────────
     if event.document and getattr(event.document, 'mime_type', '') == 'application/pdf':
-        await _cmd_pdf(event, text, loop)
+        await handle_pdf(event, text)
         return
 
     # ── 봇 채팅창: URL 직접 요약 ─────────────────────────────────────────────
     if text and not text.startswith('/'):
-        await _cmd_url(event, text, loop)
-
-
-# ==========================================
-# 명령어 처리 함수
-# ==========================================
-async def _cmd_finance(event, comp: str, loop):
-    """`/재무` — DART 재무 분석 + 주가 + 차트."""
-    await event.reply(f"📊 **{comp}** 분석 중... (주가 조회 + DART 재무 + 차트 생성)")
-
-    ticker     = get_kr_ticker(comp)
-    fin_task   = loop.run_in_executor(_executor, get_finance_summary_sync, comp)
-    price_task = loop.run_in_executor(_executor, get_price_info_kr, ticker, comp) if ticker else None
-
-    if price_task:
-        fin_text, price_text = await asyncio.gather(fin_task, price_task)
-    else:
-        fin_text   = await fin_task
-        price_text = ''
-
-    charts = []
-    if ticker:
-        fname    = safe_filename(comp)
-        path_d   = os.path.join(CHARTS_DIR, f"{fname}_daily.png")
-        path_w   = os.path.join(CHARTS_DIR, f"{fname}_weekly.png")
-        path_fin = os.path.join(CHARTS_DIR, f"{fname}_financials.png")
-        await loop.run_in_executor(_executor, _draw_chart_kr, ticker, comp, path_d, path_w)
-        await loop.run_in_executor(_executor, _draw_chart_financials, ticker, comp, path_fin)
-        charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
-
-    header = f"📈 **[{comp} 투자 분석 리포트]**\n\n"
-    if price_text:
-        header += price_text + "\n\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    await reply_chunked(event, header + fin_text)
-
-    if charts:
-        await bot_client.send_file(MY_TELEGRAM_ID, charts)
-        cleanup_files(charts)
-
-
-async def _cmd_us(event, query: str, loop):
-    """`/us` — 미국 종목 리포트 + 차트."""
-    await event.reply(f"🇺🇸 **{query}** 미국 종목 조회 중...")
-
-    ticker      = US_STOCK_MAP.get(query.lower(), US_STOCK_MAP.get(query, query.upper()))
-    tk          = safe_filename(ticker)
-    path_d      = os.path.join(CHARTS_DIR, f"US_{tk}_daily.png")
-    path_w      = os.path.join(CHARTS_DIR, f"US_{tk}_weekly.png")
-    path_fin    = os.path.join(CHARTS_DIR, f"US_{tk}_financials.png")
-    report_task = loop.run_in_executor(_executor, get_us_report_text, query)
-    chart_task  = loop.run_in_executor(_executor, _draw_chart_us, query, path_d, path_w)
-
-    report_text = await report_task
-    await chart_task
-    await loop.run_in_executor(_executor, _draw_chart_financials, ticker, query, path_fin)
-
-    await reply_chunked(event, f"📊 **[미국 종목 리포트]**\n\n{report_text}")
-
-    charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
-    if charts:
-        await bot_client.send_file(MY_TELEGRAM_ID, charts)
-        cleanup_files(charts)
-
-
-async def _cmd_dart_filings(event, comp: str, loop):
-    """`/공시` — 최근 3건 공시. 조회 범위는 당해 연초(1월 1일)부터 (YTD)."""
-    start_dt = kst_today().replace(month=1, day=1).strftime('%Y-%m-%d')
-    reports  = await loop.run_in_executor(
-        _executor, lambda: dart.list(comp, start=start_dt)
-    )
-    if reports is None or reports.empty:
-        await event.reply(f"❌ '{comp}'의 최근 공시가 없습니다.")
-        return
-    msg = f"📑 **[{comp} 최근 주요 공시]**\n\n"
-    for _, row in reports.head(3).iterrows():
-        link = DART_FILING_URL.format(row['rcept_no'])
-        msg += f"▪️ {row['rcept_dt']} | [{row['report_nm']}]({link})\n"
-    await event.reply(msg, link_preview=False)
-
-
-async def _cmd_watchlist(event):
-    stocks = load_watchlist()
-    if not stocks:
-        await event.reply("📋 관심종목이 비어 있습니다.\n\n/watch 삼성전자  →  추가")
-        return
-    msg = f"📋 **관심종목 ({len(stocks)}종목)**\n\n"
-    for i, s in enumerate(stocks, 1):
-        msg += f"{i}. {s}\n"
-    msg += "\n/watch 종목명  →  추가\n/unwatch 종목명  →  삭제"
-    await event.reply(msg)
-
-
-async def _cmd_channel_add(event, text: str):
-    ch = text.replace('/채널추가', '').strip()
-    if not ch:
-        await event.reply("사용법: /채널추가 @채널유저네임 (또는 비공개 채널 숫자 ID)")
-        return
-    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
-    channels = load_channels()
-    if ch in channels:
-        await event.reply(f"'{ch}'은(는) 이미 모니터링 중입니다.")
-        return
-    channels.append(ch)
-    save_channels(channels)
-    await update_channel_handler(channels)
-    await event.reply(
-        f"✅ '{ch}' 모니터링 채널에 추가됐습니다. (총 {len(channels)}개)\n\n"
-        "⚠️ user_client 계정이 해당 채널에 가입되어 있어야 합니다."
-    )
-
-
-async def _cmd_channel_remove(event, text: str):
-    ch = text.replace('/채널삭제', '').strip()
-    if not ch:
-        await event.reply("사용법: /채널삭제 @채널유저네임 (또는 비공개 채널 숫자 ID)")
-        return
-    ch = normalize_channel(ch)  # 숫자 ID → int, 유저네임 → '@' 보장
-    channels = load_channels()
-    if ch not in channels:
-        await event.reply(f"'{ch}'은(는) 모니터링 목록에 없습니다.")
-        return
-    channels.remove(ch)
-    save_channels(channels)
-    await update_channel_handler(channels)
-    await event.reply(f"🗑️ '{ch}' 모니터링 채널에서 삭제됐습니다. (총 {len(channels)}개)")
-
-
-async def _cmd_channel_list(event):
-    channels = load_channels()
-    if not channels:
-        await event.reply("📡 모니터링 채널이 없습니다.\n\n/채널추가 @채널유저네임  →  추가")
-        return
-    msg = f"📡 **모니터링 채널 ({len(channels)}개)**\n\n"
-    for i, ch in enumerate(channels, 1):
-        msg += f"{i}. {ch}\n"
-    msg += "\n/채널추가 @유저네임  →  추가\n/채널삭제 @유저네임  →  삭제"
-    await event.reply(msg)
-
-
-async def _cmd_pdf(event, text: str, loop):
-    """봇 채팅 PDF 첨부 → 분석. analyze_pdf가 경로 검증 + 정리 책임."""
-    file_path = await event.download_media(file=DOWNLOAD_DIR)
-    caption   = (text or '').strip() or '(제목 없음)'
-
-    if not file_path:
-        await event.reply("⚠️ PDF 다운로드에 실패했습니다.")
-        return
-
-    filename = os.path.basename(file_path)
-    await event.reply("📄 **PDF 분석 중...**\n⏳ Gemini가 리포트를 읽고 있습니다...")
-    try:
-        answer = await analyze_pdf(file_path, _executor)
-        await event.reply(
-            f"📊 **[PDF 리포트 분석]**\n_{caption}_\n\n{answer}\n\n📎 파일명: {filename}"
-        )
-    except Exception as e:
-        log.warning("PDF 분석 실패 (%s): %s", file_path, e)
-        await event.reply("⚠️ PDF 분석 중 오류가 발생했습니다.")
-
-
-async def _cmd_url(event, text: str, loop):
-    """봇 채팅 URL → YouTube 자막 또는 웹 본문 요약."""
-    urls = re.findall(r'https?://[^\s]+', text)
-    if not urls:
-        return
-    url = urls[0]
-
-    if re.search(r'(youtube\.com/watch|youtu\.be/)', url):
-        vid_id = extract_youtube_id(url)
-        if not vid_id:
-            await event.reply("⚠️ YouTube 영상 ID를 인식할 수 없습니다.")
-            return
-        await event.reply("▶️ **유튜브 자막 추출 중...**")
-        try:
-            segments = await loop.run_in_executor(
-                _executor,
-                lambda: YouTubeTranscriptApi.get_transcript(vid_id, languages=['ko', 'en'])
-            )
-            transcript = ' '.join(s['text'] for s in segments)
-            res = await loop.run_in_executor(
-                _executor,
-                lambda: generate_with_retry([LINK_PROMPT + "\n\n" + _wrap_external(transcript)])
-            )
-            await event.reply(f"▶️ **[유튜브 인사이트 요약]**\n\n{res.text}\n\n📎 원문: {url}")
-        except Exception as e:
-            log.warning("YouTube 자막/요약 실패 (%s): %s", url, e)
-            await event.reply(f"⚠️ 자막을 가져올 수 없습니다.\n📎 원문: {url}")
-        return
-
-    await event.reply("🌐 **링크 분석 중...**")
-    page_text = await loop.run_in_executor(_executor, fetch_webpage_text, url)
-    if not page_text:
-        await event.reply(f"⚠️ 해당 링크에서 내용을 가져오지 못했습니다.\n📎 {url}")
-        return
-    try:
-        res = await loop.run_in_executor(
-            _executor,
-            lambda: generate_with_retry([LINK_PROMPT + "\n\n" + _wrap_external(page_text)])
-        )
-        await event.reply(f"🌐 **[네모 봇 인사이트 요약]**\n\n{res.text}\n\n📎 원문: {url}")
-    except Exception as e:
-        log.warning("URL 요약 실패 (%s): %s", url, e)
-        await event.reply("⚠️ 요약 중 오류가 발생했습니다.")
+        await handle_url(event, text)
 
 
 _HELP_TEXT = (
@@ -564,7 +348,7 @@ _HELP_TEXT = (
 # 메인 가동 루틴
 # ==========================================
 _START_RETRIES = 5
-_START_RETRY_DELAY = 2
+_START_RETRY_DELAY_SEC = 2
 
 
 async def _heartbeat():
@@ -602,8 +386,8 @@ async def main():
             if attempt == _START_RETRIES:
                 raise
             log.warning("클라이언트 시작 실패 (%d/%d): %s — %d초 후 재시도",
-                        attempt, _START_RETRIES, exc, _START_RETRY_DELAY)
-            await asyncio.sleep(_START_RETRY_DELAY)
+                        attempt, _START_RETRIES, exc, _START_RETRY_DELAY_SEC)
+            await asyncio.sleep(_START_RETRY_DELAY_SEC)
 
     if channel_summary_enabled():
         init_channels = load_channels()

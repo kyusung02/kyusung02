@@ -130,30 +130,38 @@ def get_kr_ticker(company: str) -> str | None:
         return None
 
 
+def _price_summary(hist) -> dict:
+    """1년치 OHLC → 현재가·전일대비·기간 등락률·52주 고저 (KR/US 공용 계산)."""
+    closes = hist['Close']
+    cur  = closes.iloc[-1]
+    prev = closes.iloc[-2] if len(hist) > 1 else cur
+    chg  = cur - prev
+    return {
+        'cur':   cur,
+        'chg':   chg,
+        'chg_p': chg / prev * 100,
+        'w_chg': (cur - closes.iloc[-5])  / closes.iloc[-5]  * 100 if len(hist) >= 5  else 0.0,
+        'm_chg': (cur - closes.iloc[-20]) / closes.iloc[-20] * 100 if len(hist) >= 20 else 0.0,
+        'ytd':   (cur - closes.iloc[0])   / closes.iloc[0]   * 100,
+        'hi52':  hist['High'].max(),
+        'lo52':  hist['Low'].min(),
+        'arrow': '▲' if chg >= 0 else '▼',
+        'sign':  '+' if chg >= 0 else '',
+    }
+
+
 def get_price_info_kr(ticker: str, company: str) -> str:
     """yfinance로 국내 주가 정보 텍스트 생성 (동기 함수 - executor에서 실행)"""
     try:
         hist = yf.Ticker(ticker).history(period='1y')
         if hist.empty:
             return ''
-        cur   = hist['Close'].iloc[-1]
-        prev  = hist['Close'].iloc[-2] if len(hist) > 1 else cur
-        chg   = cur - prev
-        chg_p = chg / prev * 100
-
-        w_chg = (cur - hist['Close'].iloc[-5])  / hist['Close'].iloc[-5]  * 100 if len(hist) >= 5  else 0.0
-        m_chg = (cur - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20] * 100 if len(hist) >= 20 else 0.0
-        ytd   = (cur - hist['Close'].iloc[0])   / hist['Close'].iloc[0]   * 100
-
-        hi52 = hist['High'].max()
-        lo52 = hist['Low'].min()
-        arrow = '▲' if chg >= 0 else '▼'
-        sign  = '+' if chg >= 0 else ''
+        s = _price_summary(hist)
         return (
             f"💰 **실시간 주가**\n"
-            f"현재가: {cur:,.0f}원  {arrow} {sign}{chg:,.0f} ({sign}{chg_p:.1f}%)\n"
-            f"금주: {w_chg:+.1f}%  |  금월: {m_chg:+.1f}%  |  YTD: {ytd:+.1f}%\n"
-            f"52주 고: {hi52:,.0f}원  |  저: {lo52:,.0f}원"
+            f"현재가: {s['cur']:,.0f}원  {s['arrow']} {s['sign']}{s['chg']:,.0f} ({s['sign']}{s['chg_p']:.1f}%)\n"
+            f"금주: {s['w_chg']:+.1f}%  |  금월: {s['m_chg']:+.1f}%  |  YTD: {s['ytd']:+.1f}%\n"
+            f"52주 고: {s['hi52']:,.0f}원  |  저: {s['lo52']:,.0f}원"
         )
     except Exception as e:
         log.warning("get_price_info_kr(%s) 실패: %s", ticker, e)
@@ -170,16 +178,7 @@ def get_us_report_text(query: str) -> str:
         if hist.empty:
             return f"❌ '{query}' 종목을 찾을 수 없습니다. (ticker: {ticker})"
 
-        cur   = hist['Close'].iloc[-1]
-        prev  = hist['Close'].iloc[-2] if len(hist) > 1 else cur
-        chg   = cur - prev
-        chg_p = chg / prev * 100
-
-        w_chg = (cur - hist['Close'].iloc[-5])  / hist['Close'].iloc[-5]  * 100 if len(hist) >= 5  else 0.0
-        m_chg = (cur - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20] * 100 if len(hist) >= 20 else 0.0
-        ytd   = (cur - hist['Close'].iloc[0])   / hist['Close'].iloc[0]   * 100
-        hi52  = hist['High'].max()
-        lo52  = hist['Low'].min()
+        s = _price_summary(hist)
 
         name      = info.get('longName', ticker)
         sector    = info.get('sector', 'N/A')
@@ -191,8 +190,6 @@ def get_us_report_text(query: str) -> str:
         div_yield = (info.get('dividendYield') or 0) * 100
 
         cap_str = f"${mkt_cap/1e12:.2f}T" if mkt_cap >= 1e12 else f"${mkt_cap/1e9:.1f}B"
-        arrow   = '▲' if chg >= 0 else '▼'
-        sign    = '+' if chg >= 0 else ''
 
         eps_lines = ''
         try:
@@ -214,9 +211,9 @@ def get_us_report_text(query: str) -> str:
             f"섹터: {sector} | {industry}\n"
             f"시가총액: {cap_str}\n\n"
             f"💵 **실시간 주가**\n"
-            f"현재가: ${cur:.2f}  {arrow} {sign}${chg:.2f} ({sign}{chg_p:.1f}%)\n"
-            f"금주: {w_chg:+.1f}%  |  금월: {m_chg:+.1f}%  |  YTD: {ytd:+.1f}%\n"
-            f"52W High: ${hi52:.2f}  |  Low: ${lo52:.2f}\n\n"
+            f"현재가: ${s['cur']:.2f}  {s['arrow']} {s['sign']}${s['chg']:.2f} ({s['sign']}{s['chg_p']:.1f}%)\n"
+            f"금주: {s['w_chg']:+.1f}%  |  금월: {s['m_chg']:+.1f}%  |  YTD: {s['ytd']:+.1f}%\n"
+            f"52W High: ${s['hi52']:.2f}  |  Low: ${s['lo52']:.2f}\n\n"
             f"📊 **밸류에이션**\n"
             f"PER: {per:.1f}x  |  Fwd PER: {fwd_per:.1f}x  |  Beta: {beta:.2f}\n"
             f"배당수익률: {div_yield:.2f}%"

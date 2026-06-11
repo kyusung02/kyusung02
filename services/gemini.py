@@ -383,7 +383,7 @@ TRADE_PARSE_PROMPT = """다음 한국어 메시지를 주식 매매 의도로 �
 출력: {"action":"sell","name":"에코프로비엠","ticker":"247540.KQ","market":"KR","shares":2,"price":null,"trade_date":null}
 
 입력: KX하이텍 1주 5천원
-출력: {"action":"buy","name":"KX하이텍","ticker":"092220.KQ","market":"KR","shares":1,"price":5000,"trade_date":null}
+출력: {"action":"buy","name":"KX하이텍","ticker":"052900.KQ","market":"KR","shares":1,"price":5000,"trade_date":null}
 
 입력: nvda 전량 정리
 출력: {"action":"sell","name":"NVIDIA","ticker":"NVDA","market":"US","shares":null,"price":null,"trade_date":null}
@@ -394,20 +394,35 @@ TRADE_PARSE_PROMPT = """다음 한국어 메시지를 주식 매매 의도로 �
 
 _JSON_FENCE_RE = re.compile(r'```(?:json)?\s*(.+?)\s*```', re.S)
 
+# 의도 파싱 입력 상한 — 정상 입력은 수십 자. 길이 제한으로 프롬프트 인젝션
+# 영향과 토큰 낭비를 함께 줄인다 (구조 변경 없이 적용 가능한 가드).
+_MAX_INTENT_INPUT = 200
 
-def parse_trade_intent(text: str) -> dict | None:
-    """자유 문장 → 매매 의도 dict. action != buy/sell 또는 파싱 실패 시 None."""
+
+def _generate_intent_json(prompt: str, text: str) -> dict | None:
+    """의도 파싱 공통 경로: 프롬프트 + 사용자 입력 → JSON dict. 실패 시 None.
+
+    parse_trade_intent / parse_alert_intent 가 공유한다 — 응답 형식(JSON 펜스
+    제거, json.loads)이 바뀌면 이 함수만 수정.
+    """
+    safe_text = (text or '')[:_MAX_INTENT_INPUT]
     try:
-        response = generate_with_retry([TRADE_PARSE_PROMPT + f"\n\n입력: {text}\n출력:"])
+        response = generate_with_retry([prompt + f"\n\n입력: {safe_text}\n출력:"])
         raw = (response.text or '').strip()
         m = _JSON_FENCE_RE.search(raw)
         if m:
             raw = m.group(1).strip()
         parsed = json.loads(raw)
     except Exception as e:
-        log.warning("trade intent 파싱 실패 (%s): %s", text[:80], e)
+        log.warning("intent 파싱 실패 (%s): %s", safe_text[:80], e)
         return None
-    if not isinstance(parsed, dict) or parsed.get('action') not in ('buy', 'sell'):
+    return parsed if isinstance(parsed, dict) else None
+
+
+def parse_trade_intent(text: str) -> dict | None:
+    """자유 문장 → 매매 의도 dict. action != buy/sell 또는 파싱 실패 시 None."""
+    parsed = _generate_intent_json(TRADE_PARSE_PROMPT, text)
+    if not parsed or parsed.get('action') not in ('buy', 'sell'):
         return None
     return parsed
 
@@ -472,16 +487,7 @@ ALERT_PARSE_PROMPT = """다음 한국어 메시지를 가격·이벤트 알림 �
 
 def parse_alert_intent(text: str) -> dict | None:
     """자유 문장 → 알림 의도 dict. intent != add 또는 파싱 실패 시 None."""
-    try:
-        response = generate_with_retry([ALERT_PARSE_PROMPT + f"\n\n입력: {text}\n출력:"])
-        raw = (response.text or '').strip()
-        m = _JSON_FENCE_RE.search(raw)
-        if m:
-            raw = m.group(1).strip()
-        parsed = json.loads(raw)
-    except Exception as e:
-        log.warning("alert intent 파싱 실패 (%s): %s", text[:80], e)
-        return None
-    if not isinstance(parsed, dict) or parsed.get('intent') != 'add':
+    parsed = _generate_intent_json(ALERT_PARSE_PROMPT, text)
+    if not parsed or parsed.get('intent') != 'add':
         return None
     return parsed

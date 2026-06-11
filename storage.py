@@ -99,6 +99,9 @@ def remove_from_watchlist(name: str) -> tuple[bool, str]:
 # ── 모니터링 채널 ────────────────────────────────────────────────────────────
 
 def load_channels() -> list:
+    # ⚠️ 폴백 동작 주의: channels.json 이 생기기 전(첫 /채널추가 이전)에는
+    # config.WATCH_CHANNELS 정적 목록이 조용히 사용된다. 파일이 생긴 뒤에는
+    # config 목록이 무시되므로, /채널삭제 해도 config 쪽은 바뀌지 않는다.
     if not os.path.exists(CHANNELS_PATH):
         return [_parse_channel(ch) for ch in WATCH_CHANNELS]
     try:

@@ -5,7 +5,6 @@
 복합 타입(52w_high/52w_low/volume_spike/rsi_above/rsi_below)은 자연어
 /알림 으로 등록(파싱 후 [✅등록][❌취소] 버튼 확인).
 """
-import time
 import uuid
 import logging
 import asyncio
@@ -18,7 +17,7 @@ from storage import (
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.alerts import check_alerts
 from services.gemini import parse_alert_intent
-from utils import kst_now
+from utils import kst_now, PendingStore
 
 log = logging.getLogger(__name__)
 
@@ -225,15 +224,7 @@ async def check_and_notify_alerts():
 
 # ── 자연어 /알림 + Inline Button ─────────────────────────────────────────────
 
-_PENDING_ALERTS: dict[str, dict] = {}
-_PENDING_TTL_SEC = 300
-
-
-def _cleanup_pending_alerts():
-    now = time.time()
-    expired = [k for k, v in _PENDING_ALERTS.items() if now - v.get('_ts', 0) > _PENDING_TTL_SEC]
-    for k in expired:
-        _PENDING_ALERTS.pop(k, None)
+_pending_alerts = PendingStore(ttl_sec=300)
 
 
 async def handle_alert_natural(event, args_text: str):
@@ -291,13 +282,11 @@ async def handle_alert_natural(event, args_text: str):
         await notice.edit(f"❌ '{alert_type}' 타입은 양수 값이 필요합니다.")
         return
 
-    _cleanup_pending_alerts()
     pending_id = uuid.uuid4().hex[:12]
-    _PENDING_ALERTS[pending_id] = {
+    _pending_alerts.put(pending_id, {
         'ticker': ticker, 'name': display, 'market': market,
         'type':   alert_type, 'value': value, 'note': note,
-        '_ts':    time.time(),
-    }
+    })
 
     note_line = f"\n- 메모: {note}" if note else ''
     msg = (
@@ -326,7 +315,7 @@ async def on_alert_callback(event):
     data = event.data.decode()
     is_confirm = data.startswith('alert_confirm:')
     pending_id = data.split(':', 1)[1]
-    pending = _PENDING_ALERTS.pop(pending_id, None)
+    pending = _pending_alerts.pop(pending_id)
 
     if pending is None:
         await event.answer("⏰ 만료된 등록 요청", alert=True)
