@@ -26,6 +26,7 @@ handlers/
   portfolio.py          ← 포트폴리오 관리 (handle_buy/sell/portfolio/trade)
   life.py               ← 생활 브리핑 (send_weekly_info — 장보기, 나들이)
   channel.py            ← 채널 모니터링·자동 요약
+  forward.py            ← 채널 포워딩 (지정 소스 채널 → 내 채널, 원문 그대로)
 
 services/
   gemini.py             ← Gemini API 래퍼 (generate_with_retry, analyze_pdf)
@@ -61,6 +62,7 @@ conftest.py             ← 테스트용 config 스텁 (DATA_DIR→임시폴더,
 | `/earnings`, `/어닝` | 어닝 캘린더 |
 | `/장보기`, `/나들이` | 생활 브리핑 |
 | `/채널추가`, `/채널삭제`, `/채널목록` | 채널 모니터링 |
+| `/포워딩대상`, `/포워딩추가`, `/포워딩삭제`, `/포워딩목록` | 채널 포워딩 |
 | `/keywords` | DART 알림 키워드 확인 |
 
 ## 스케줄러 현황 (main.py)

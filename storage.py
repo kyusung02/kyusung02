@@ -32,6 +32,7 @@ SEEN_FILINGS_PATH = os.path.join(DATA_DIR, "seen_filings.json")
 PORTFOLIO_PATH    = os.path.join(DATA_DIR, "portfolio.json")
 ALERTS_PATH         = os.path.join(DATA_DIR, "alerts.json")
 SEEN_EARNINGS_PATH  = os.path.join(DATA_DIR, "seen_earnings.json")
+FORWARD_PATH        = os.path.join(DATA_DIR, "forward.json")
 _MAX_SEEN = 1000
 _MAX_SEEN_EARNINGS = 500
 
@@ -286,6 +287,62 @@ def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str
     if name.replace('.', '').replace('-', '').isalpha() and name.isascii():
         return name.upper(), "US", name.upper()
     return None, "", ""
+
+
+# ── 채널 포워딩 설정 ─────────────────────────────────────────────────────────
+# {"target": int|str|None, "sources": [int|str, ...]}
+# 소스 채널의 새 메시지를 target 채널로 원문 그대로 전달 (handlers/forward.py).
+
+_EMPTY_FORWARD = {"target": None, "sources": []}
+
+
+def load_forward_config() -> dict:
+    if not os.path.exists(FORWARD_PATH):
+        return dict(_EMPTY_FORWARD, sources=[])
+    try:
+        with open(FORWARD_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return dict(_EMPTY_FORWARD, sources=[])
+        sources = data.get("sources")
+        return {
+            "target":  data.get("target"),
+            "sources": [_parse_channel(ch) for ch in sources] if isinstance(sources, list) else [],
+        }
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("forward 설정 로드 실패 — 빈 설정 반환: %s", e)
+        return dict(_EMPTY_FORWARD, sources=[])
+
+
+def save_forward_config(cfg: dict):
+    _atomic_json_save(FORWARD_PATH, cfg, ensure_ascii=False, indent=2)
+
+
+def set_forward_target(ch) -> dict:
+    cfg = load_forward_config()
+    cfg["target"] = normalize_channel(ch)
+    save_forward_config(cfg)
+    return cfg
+
+
+def add_forward_source(ch) -> tuple[bool, dict]:
+    cfg = load_forward_config()
+    ch = normalize_channel(ch)
+    if ch in cfg["sources"]:
+        return False, cfg
+    cfg["sources"].append(ch)
+    save_forward_config(cfg)
+    return True, cfg
+
+
+def remove_forward_source(ch) -> tuple[bool, dict]:
+    cfg = load_forward_config()
+    ch = normalize_channel(ch)
+    if ch not in cfg["sources"]:
+        return False, cfg
+    cfg["sources"].remove(ch)
+    save_forward_config(cfg)
+    return True, cfg
 
 
 def collect_us_name_map(get_kr_ticker_fn, us_map: dict, portfolio: dict | None = None) -> dict[str, str]:

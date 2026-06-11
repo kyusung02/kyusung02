@@ -34,7 +34,7 @@ from config import (
 from clients import user_client, bot_client, _executor
 from storage import (
     load_watchlist, add_to_watchlist, remove_from_watchlist,
-    load_channels, save_channels, normalize_channel,
+    load_channels, save_channels, normalize_channel, load_forward_config,
 )
 from services.gemini import (
     LINK_PROMPT, generate_with_retry, _wrap_external, analyze_pdf,
@@ -45,6 +45,10 @@ from services.stock import (
 from services.chart import _draw_chart_kr, _draw_chart_us, _draw_chart_financials
 from services.dart_service import DART_FILING_URL, get_finance_summary_sync, get_dart_recent_filings_sync
 from handlers.channel import on_channel_msg, update_channel_handler
+from handlers.forward import (
+    on_forward_msg, handle_forward_target,
+    handle_forward_add, handle_forward_remove, handle_forward_list,
+)
 from handlers.dart import check_dart_watchlist
 from handlers.market import send_us_morning
 from handlers.sector import send_kr_sector_briefing
@@ -242,6 +246,20 @@ async def on_bot_msg(event):
 
     if text == '/채널목록':
         await _cmd_channel_list(event)
+        return
+
+    # ── 채널 포워딩 ──────────────────────────────────────────────────────────
+    if text.startswith('/포워딩추가'):
+        await handle_forward_add(event, text[len('/포워딩추가'):])
+        return
+    if text.startswith('/포워딩삭제'):
+        await handle_forward_remove(event, text[len('/포워딩삭제'):])
+        return
+    if text == '/포워딩목록':
+        await handle_forward_list(event)
+        return
+    if text.startswith('/포워딩대상'):
+        await handle_forward_target(event, text[len('/포워딩대상'):])
         return
 
     # ── 도움말 ──────────────────────────────────────────────────────────────
@@ -501,6 +519,12 @@ _HELP_TEXT = (
     "  `/채널추가 @유저네임` — 모니터링 채널 추가\n"
     "  `/채널삭제 @유저네임` — 모니터링 채널 삭제\n"
     "  `/채널목록` — 현재 모니터링 중인 채널 목록\n\n"
+    "📨 **채널 포워딩** (지정 채널 → 내 채널, 원문 그대로)\n"
+    "  `/포워딩대상 @내채널` — 전달받을 대상 채널 설정\n"
+    "  `/포워딩추가 @채널` — 포워딩할 소스 채널 추가\n"
+    "  `/포워딩삭제 @채널` — 소스 채널 삭제\n"
+    "  `/포워딩목록` — 포워딩 설정·상태 확인\n"
+    "    ※ 포워딩 금지 채널은 복사 전송으로 자동 폴백\n\n"
     "📈 **시황 브리핑**\n"
     "  `/시황` — 미국 3대 지수·원자재·금리·BTC·SOX·SMH 시황 즉시 조회\n"
     "    ※ 매일 07:00 자동 발송\n"
@@ -583,6 +607,14 @@ async def main():
     else:
         log.info("채널 요약 서비스 비활성 (CHANNEL_SUMMARY_ENABLED=true 로 활성화)")
 
+    # 채널 포워딩 — 요약 서비스와 독립. 소스+대상이 설정되어 있으면 활성.
+    fwd_cfg = load_forward_config()
+    if fwd_cfg["sources"] and fwd_cfg["target"] is not None:
+        user_client.add_event_handler(on_forward_msg, events.NewMessage(chats=fwd_cfg["sources"]))
+        log.info("채널 포워딩 등록 완료 (%d개 → %s)", len(fwd_cfg["sources"]), fwd_cfg["target"])
+    else:
+        log.info("채널 포워딩 미설정 — /포워딩대상 + /포워딩추가 로 활성화")
+
     # 모든 스케줄 job 공통 옵션: 동시 실행 1건만, 누락된 트리거는 합쳐서 1회 실행, 5분 grace.
     job_defaults = {"max_instances": 1, "coalesce": True, "misfire_grace_time": 300}
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul", job_defaults=job_defaults)
@@ -645,9 +677,12 @@ async def main():
         "🔹 국내: /재무 삼성전자, /공시 삼성전자\n"
         "🔹 미국: /us NVDA, /us 엔비디아\n"
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
+        "🔹 포트폴리오: /거래, /portfolio (국내가는 네이버 시세)\n"
+        "🔹 알림: /알림 (매 5분 자동 체크)\n"
         "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
         "🔹 섹터: /섹터 (평일 10/12/14/16시 자동 발송)\n"
         "🔹 반도체: /semi (월요일 08:00 자동 발송)\n"
+        "🔹 채널 포워딩: /포워딩대상 + /포워딩추가 (원문 그대로 전달)\n"
         "🔹 생활: /장보기, /나들이\n\n"
         "📖 전체 명령어 보기: /help"
     )
