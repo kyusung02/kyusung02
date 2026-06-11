@@ -15,7 +15,7 @@ from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from storage import (
-    load_portfolio, add_buy, add_sell, resolve_ticker_input,
+    load_portfolio, add_buy, add_sell, resolve_ticker_input, rename_portfolio_ticker,
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.portfolio import evaluate_portfolio, format_portfolio_message
@@ -129,6 +129,25 @@ async def handle_portfolio(event):
         await event.reply("⚠️ 포트폴리오 평가 중 오류가 발생했습니다.")
         return
     await bot_client.send_message(MY_TELEGRAM_ID, format_portfolio_message(result), parse_mode='md')
+
+
+async def handle_fix_ticker(event, args_text: str):
+    """`/티커수정 <기존티커> <새티커>` — 잘못 저장된 포트폴리오 티커 교정.
+
+    예: Gemini 파싱이 오티커를 내보낸 경우(/거래 KX하이텍 → 092220.KQ 사고)
+    보유 내역을 유지한 채 키만 바로잡는다.
+    """
+    parts = args_text.split()
+    if len(parts) != 2:
+        await event.reply(
+            "사용법: /티커수정 <기존티커> <새티커>\n"
+            "예) /티커수정 092220.KQ 052900.KQ\n\n"
+            "현재 보유 티커는 /portfolio 에서 확인하세요."
+        )
+        return
+    old, new = parts[0].upper(), parts[1].upper()
+    _, msg = rename_portfolio_ticker(old, new)
+    await event.reply(msg)
 
 
 # ── 자연어 거래 (/거래) + Inline Button 확인 ──────────────────────────────────

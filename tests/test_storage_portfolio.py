@@ -70,6 +70,34 @@ def test_add_sell_unknown_ticker():
     assert '보유' in msg
 
 
+# ── rename_portfolio_ticker ─────────────────────────────────────────────────
+
+def test_rename_ticker_keeps_holdings():
+    storage.add_buy('092220.KQ', 'KX하이텍', 'KR', 100, 1500.0, '2026-06-01')
+    ok, msg = storage.rename_portfolio_ticker('092220.KQ', '052900.KQ')
+    assert ok
+    p = storage.load_portfolio()
+    assert '092220.KQ' not in p
+    assert p['052900.KQ']['shares'] == 100
+    assert p['052900.KQ']['avg_price'] == pytest.approx(1500.0)
+    assert p['052900.KQ']['market'] == 'KR'
+
+
+def test_rename_ticker_market_recalc():
+    storage.add_buy('NVDA', '엔비디아', 'US', 1, 100.0, '2026-06-01')
+    storage.rename_portfolio_ticker('NVDA', '005930.KS')
+    assert storage.load_portfolio()['005930.KS']['market'] == 'KR'
+
+
+def test_rename_ticker_missing_or_conflict():
+    ok, _ = storage.rename_portfolio_ticker('GHOST', 'NEW')
+    assert ok is False
+    storage.add_buy('AAA', 'a', 'US', 1, 1.0, '2026-06-01')
+    storage.add_buy('BBB', 'b', 'US', 1, 1.0, '2026-06-01')
+    ok, _ = storage.rename_portfolio_ticker('AAA', 'BBB')  # 기존 키와 충돌
+    assert ok is False
+
+
 # ── normalize_channel ───────────────────────────────────────────────────────
 
 def test_normalize_channel_numeric_id_stays_int():

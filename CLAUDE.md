@@ -59,7 +59,7 @@ conftest.py             ← 테스트용 config 스텁 (DATA_DIR→임시폴더,
 | `/us 종목명` | 미국 종목 리포트 + 차트 |
 | `/공시 종목명` | 최근 DART 공시 3건 |
 | `/watch`, `/unwatch`, `/watchlist` | 관심종목 관리 |
-| `/거래`, `/buy`, `/sell`, `/portfolio` | 포트폴리오 관리 |
+| `/거래`, `/buy`, `/sell`, `/portfolio`, `/티커수정` | 포트폴리오 관리 |
 | `/알림`, `/alert`, `/alerts`, `/unalert` | 가격·이벤트 알림 |
 | `/earnings`, `/어닝` | 어닝 캘린더 |
 | `/장보기`, `/나들이` | 생활 브리핑 |

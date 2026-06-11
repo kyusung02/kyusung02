@@ -49,7 +49,9 @@ from handlers.memory import send_memory_briefing
 from handlers.report import handle_report
 from handlers.research import send_daily_research
 from handlers.life import send_weekly_info
-from handlers.portfolio import handle_buy, handle_sell, handle_portfolio, handle_trade
+from handlers.portfolio import (
+    handle_buy, handle_sell, handle_portfolio, handle_trade, handle_fix_ticker,
+)
 # import handlers.portfolio 시점에 on_trade_callback 데코레이터가 bot_client 에 자동 등록됨.
 from handlers.alerts import (
     handle_alert_add, handle_alert_list, handle_alert_remove, handle_alert_natural,
@@ -173,6 +175,9 @@ async def on_bot_msg(event):
     if text == '/portfolio' or text == '/포폴':
         await handle_portfolio(event)
         return
+    if text.startswith('/티커수정'):
+        await handle_fix_ticker(event, text[len('/티커수정'):].strip())
+        return
 
     # ── 가격·이벤트 알림 ────────────────────────────────────────────────────
     if text.startswith('/알림 ') or text == '/알림':
@@ -293,7 +298,8 @@ _HELP_TEXT = (
     "    예) `/거래 삼성전자 10주 8만원에 샀어`, `/거래 nvda 전량 정리`\n"
     "  `/buy <종목> <수량> <단가> [날짜]` — 정형 매수 (재매수 시 평단가 가중평균)\n"
     "  `/sell <종목> [수량]` — 정형 매도 (수량 생략 시 전량)\n"
-    "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n\n"
+    "  `/portfolio` (또는 `/포폴`) — 평가금액·수익률·종목별 비중\n"
+    "  `/티커수정 <기존> <새>` — 잘못 저장된 티커 교정 (보유 내역 유지)\n\n"
     "📅 **어닝 (실적 발표)**\n"
     "  `/어닝 <종목>` 또는 `/earnings <종목>` — 어닝 히스토리(EPS 추정 vs 실제) + 다음 예정\n"
     "    예) `/어닝 NVDA`, `/어닝 엔비디아`\n"

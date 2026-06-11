@@ -208,6 +208,24 @@ def add_sell(ticker: str, shares: float | None = None) -> tuple[bool, str]:
     return True, msg
 
 
+def rename_portfolio_ticker(old: str, new: str) -> tuple[bool, str]:
+    """포트폴리오 키(티커) 교정 — 자연어 파싱 오류 등으로 잘못 저장된 티커 복구용.
+
+    보유 내역(수량·평단·매수일)은 그대로 유지하고 키만 바꾼다.
+    market 필드는 새 티커 형식(.KS/.KQ=KR, 그 외=US)에 맞춰 보정.
+    """
+    p = load_portfolio()
+    if old not in p:
+        return False, f"'{old}' 보유 내역이 없습니다."
+    if new in p:
+        return False, f"'{new}' 항목이 이미 존재합니다 — 병합은 지원하지 않습니다."
+    p[new] = p.pop(old)
+    p[new]['market'] = 'KR' if new.endswith(('.KS', '.KQ')) else 'US'
+    save_portfolio(p)
+    name = p[new].get('name', new)
+    return True, f"✅ {name}: `{old}` → `{new}` 티커 교정 완료"
+
+
 # ── D-1 어닝 알림 발송 이력 (중복 방지) ─────────────────────────────────────
 # 키 = "{ticker}:{date}". 발송한 알림을 기록해 같은 날 반복 발송을 방지.
 
