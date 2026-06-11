@@ -14,7 +14,7 @@ from telethon.errors import ChatForwardsRestrictedError
 from clients import user_client
 from config import DOWNLOAD_DIR
 from storage import (
-    load_forward_config, set_forward_target,
+    load_forward_config, set_forward_target, clear_forward_target,
     add_forward_source, remove_forward_source, normalize_channel,
 )
 from utils import cleanup_files
@@ -82,8 +82,14 @@ async def handle_forward_target(event, args_text: str):
         cur = cfg.get('target')
         await event.reply(
             "사용법: /포워딩대상 @채널유저네임 (또는 비공개 채널 숫자 ID)\n"
+            "해제: /포워딩대상 해제\n"
             f"현재 대상: {cur if cur is not None else '(미설정)'}"
         )
+        return
+    if ch in ('해제', '삭제', 'off'):
+        clear_forward_target()
+        await update_forward_handler()
+        await event.reply("🗑️ 포워딩 대상이 해제됐습니다. (포워딩 비활성 — 소스 목록은 유지)")
         return
     cfg = set_forward_target(ch)
     await update_forward_handler()

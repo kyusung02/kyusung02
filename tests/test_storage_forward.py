@@ -46,3 +46,11 @@ def test_add_remove_source_roundtrip():
 def test_remove_missing_source():
     ok, _ = storage.remove_forward_source('@ghost')
     assert ok is False
+
+
+def test_clear_target_keeps_sources():
+    storage.set_forward_target('@mychannel')
+    storage.add_forward_source('@src')
+    cfg = storage.clear_forward_target()
+    assert cfg["target"] is None
+    assert cfg["sources"] == ['@src']

@@ -325,6 +325,13 @@ def set_forward_target(ch) -> dict:
     return cfg
 
 
+def clear_forward_target() -> dict:
+    cfg = load_forward_config()
+    cfg["target"] = None
+    save_forward_config(cfg)
+    return cfg
+
+
 def add_forward_source(ch) -> tuple[bool, dict]:
     cfg = load_forward_config()
     ch = normalize_channel(ch)
