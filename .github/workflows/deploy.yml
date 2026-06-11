@@ -35,30 +35,31 @@ jobs:
             echo "=== git pull ==="
             git pull origin master
 
+            echo "=== 문법 검사 ==="
+            # 문법 오류 커밋이 봇을 죽이기 전에 차단 (set -e로 실패 시 재시작 안 함)
+            python3 -m py_compile main.py clients.py config.py storage.py utils.py handlers/*.py services/*.py
+            echo "py_compile 통과"
+
             echo "=== 의존성 동기화 ==="
             pip3 install -r requirements.txt --user --quiet
 
             echo "=== 봇 재시작 ==="
-            if systemctl is-active --quiet nemo-bot; then
-              sudo systemctl restart nemo-bot
-              echo "nemo-bot 서비스 재시작 완료"
-            elif systemctl is-active --quiet kyusung02; then
-              sudo systemctl restart kyusung02
-              echo "kyusung02 서비스 재시작 완료"
-            elif systemctl is-active --quiet bot; then
-              sudo systemctl restart bot
-              echo "bot 서비스 재시작 완료"
-            else
+            SVC=""
+            for s in nemo-bot kyusung02 bot; do
+              if systemctl is-active --quiet "$s"; then SVC="$s"; break; fi
+            done
+            if [ -z "$SVC" ]; then
               echo "ERROR: nemo-bot / kyusung02 / bot 서비스를 찾을 수 없습니다"
               exit 1
             fi
+            sudo systemctl restart "$SVC"
+            echo "$SVC 서비스 재시작 완료"
 
             echo "=== 서비스 상태 확인 ==="
             sleep 3
-            if systemctl is-active --quiet nemo-bot; then
-              systemctl status nemo-bot --no-pager -l | tail -20
-            elif systemctl is-active --quiet kyusung02; then
-              systemctl status kyusung02 --no-pager -l | tail -20
-            else
-              systemctl status bot --no-pager -l | tail -20
+            if ! systemctl is-active --quiet "$SVC"; then
+              echo "ERROR: $SVC 재시작 후 비활성 상태 — 배포 실패"
+              sudo journalctl -u "$SVC" -n 30 --no-pager || true
+              exit 1
             fi
+            systemctl status "$SVC" --no-pager -l | tail -20

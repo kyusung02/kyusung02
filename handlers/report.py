@@ -15,7 +15,7 @@ from services.dart_service import (
     get_quarterly_financials_text_sync,
     get_naver_research_sync,
 )
-from utils import reply_chunked
+from utils import reply_chunked, safe_filename, cleanup_files
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +41,13 @@ async def handle_report(event, company: str):
         loop.run_in_executor(_executor, get_naver_research_sync, company),
     )
 
-    path_pnl      = os.path.join(CHARTS_DIR, f"{company}_pnl.png")
-    path_ttm_rev  = os.path.join(CHARTS_DIR, f"{company}_ttm_rev.png")
-    path_ttm_op   = os.path.join(CHARTS_DIR, f"{company}_ttm_op.png")
-    path_daily    = os.path.join(CHARTS_DIR, f"{company}_rpt_daily.png")
-    path_weekly   = os.path.join(CHARTS_DIR, f"{company}_rpt_weekly.png")
-    path_investor = os.path.join(CHARTS_DIR, f"{company}_investor.png")
+    fname         = safe_filename(company)
+    path_pnl      = os.path.join(CHARTS_DIR, f"{fname}_pnl.png")
+    path_ttm_rev  = os.path.join(CHARTS_DIR, f"{fname}_ttm_rev.png")
+    path_ttm_op   = os.path.join(CHARTS_DIR, f"{fname}_ttm_op.png")
+    path_daily    = os.path.join(CHARTS_DIR, f"{fname}_rpt_daily.png")
+    path_weekly   = os.path.join(CHARTS_DIR, f"{fname}_rpt_weekly.png")
+    path_investor = os.path.join(CHARTS_DIR, f"{fname}_investor.png")
 
     await asyncio.gather(
         loop.run_in_executor(_executor, _draw_report_financials, ticker, company, path_pnl, path_ttm_rev, path_ttm_op),
@@ -69,8 +70,4 @@ async def handle_report(event, company: str):
     charts = [p for p in chart_order if os.path.exists(p)]
     if charts:
         await bot_client.send_file(MY_TELEGRAM_ID, charts)
-        for p in charts:
-            try:
-                os.remove(p)
-            except OSError as e:
-                log.debug("차트 파일 삭제 실패 %s: %s", p, e)
+        cleanup_files(charts)

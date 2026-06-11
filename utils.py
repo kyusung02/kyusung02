@@ -131,6 +131,28 @@ def is_url_safe(url: str) -> bool:
     return True
 
 
+_SAFE_FILENAME_RE = re.compile(r'[^0-9A-Za-z가-힣._-]+')
+
+
+def safe_filename(name: str) -> str:
+    """파일명 구성요소 정규화 — 경로 구분자·특수문자 제거 (path traversal 방지).
+
+    사용자 입력 종목명이나 Gemini 응답에서 파생된 ticker를 파일 경로에 넣기 전에
+    반드시 통과시킨다. 빈 결과는 'unnamed' 반환.
+    """
+    cleaned = _SAFE_FILENAME_RE.sub('_', os.path.basename(str(name)))
+    return cleaned.strip('._') or 'unnamed'
+
+
+def cleanup_files(paths) -> None:
+    """임시 파일 목록 삭제 — 실패는 debug 로그만 남기고 무시."""
+    for p in paths:
+        try:
+            os.remove(p)
+        except OSError as e:
+            log.debug("파일 삭제 실패 %s: %s", p, e)
+
+
 _YT_HOSTS = {'youtu.be', 'www.youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com'}
 _YT_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
 

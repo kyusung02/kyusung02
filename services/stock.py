@@ -1,10 +1,13 @@
 """
 주가 데이터 — yfinance 조회, DART 종목 코드 변환, 미국 종목 매핑
 """
+import json
 import logging
+import urllib.request
 import yfinance as yf
 import OpenDartReader
 from config import DART_API_KEY
+from utils import safe_opener
 
 log = logging.getLogger(__name__)
 dart = OpenDartReader(DART_API_KEY)
@@ -64,6 +67,33 @@ _KR_TICKER_FALLBACK = {
 def is_korean_ticker(ticker: str) -> bool:
     """yfinance ticker가 KOSPI(.KS) 또는 KOSDAQ(.KQ)인지 판별."""
     return bool(ticker) and (ticker.endswith('.KS') or ticker.endswith('.KQ'))
+
+
+_NAVER_PRICE_URL = "https://m.stock.naver.com/api/stock/{code}/basic"
+
+
+def get_kr_price_naver(ticker: str) -> float | None:
+    """네이버 금융 API로 국내 종목 현재가 조회. 실패 시 None.
+
+    yfinance는 코스닥 소형주에서 장중 가격이 전일 종가에 머물거나 일별 데이터에
+    결손이 생긴다(예: KX하이텍 052900 — 거래량 누락 확인됨). 국내 종목 현재가는
+    네이버를 1순위로 쓰고 yfinance는 폴백으로만 사용한다.
+    """
+    code = ticker.split('.')[0]
+    if not (code.isdigit() and len(code) == 6):
+        return None
+    try:
+        req = urllib.request.Request(
+            _NAVER_PRICE_URL.format(code=code),
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with safe_opener.open(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        price = float(str(data.get("closePrice", "")).replace(",", ""))
+        return price if price > 0 else None
+    except Exception as e:
+        log.warning("get_kr_price_naver(%s) 실패: %s", ticker, e)
+        return None
 
 
 def get_kr_ticker(company: str) -> str | None:

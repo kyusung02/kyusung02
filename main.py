@@ -64,6 +64,7 @@ from handlers.earnings import handle_earnings, check_and_notify_imminent_earning
 from utils import (
     extract_youtube_id, fetch_webpage_text, reply_chunked, kst_today,
     channel_summary_enabled, healthcheck_enabled, ping_healthcheck,
+    safe_filename, cleanup_files,
 )
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -277,9 +278,10 @@ async def _cmd_finance(event, comp: str, loop):
 
     charts = []
     if ticker:
-        path_d   = os.path.join(CHARTS_DIR, f"{comp}_daily.png")
-        path_w   = os.path.join(CHARTS_DIR, f"{comp}_weekly.png")
-        path_fin = os.path.join(CHARTS_DIR, f"{comp}_financials.png")
+        fname    = safe_filename(comp)
+        path_d   = os.path.join(CHARTS_DIR, f"{fname}_daily.png")
+        path_w   = os.path.join(CHARTS_DIR, f"{fname}_weekly.png")
+        path_fin = os.path.join(CHARTS_DIR, f"{fname}_financials.png")
         await loop.run_in_executor(_executor, _draw_chart_kr, ticker, comp, path_d, path_w)
         await loop.run_in_executor(_executor, _draw_chart_financials, ticker, comp, path_fin)
         charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
@@ -291,11 +293,7 @@ async def _cmd_finance(event, comp: str, loop):
 
     if charts:
         await bot_client.send_file(MY_TELEGRAM_ID, charts)
-        for p in charts:
-            try:
-                os.remove(p)
-            except OSError as e:
-                log.debug("차트 파일 삭제 실패 %s: %s", p, e)
+        cleanup_files(charts)
 
 
 async def _cmd_us(event, query: str, loop):
@@ -303,9 +301,10 @@ async def _cmd_us(event, query: str, loop):
     await event.reply(f"🇺🇸 **{query}** 미국 종목 조회 중...")
 
     ticker      = US_STOCK_MAP.get(query.lower(), US_STOCK_MAP.get(query, query.upper()))
-    path_d      = os.path.join(CHARTS_DIR, f"US_{ticker}_daily.png")
-    path_w      = os.path.join(CHARTS_DIR, f"US_{ticker}_weekly.png")
-    path_fin    = os.path.join(CHARTS_DIR, f"US_{ticker}_financials.png")
+    tk          = safe_filename(ticker)
+    path_d      = os.path.join(CHARTS_DIR, f"US_{tk}_daily.png")
+    path_w      = os.path.join(CHARTS_DIR, f"US_{tk}_weekly.png")
+    path_fin    = os.path.join(CHARTS_DIR, f"US_{tk}_financials.png")
     report_task = loop.run_in_executor(_executor, get_us_report_text, query)
     chart_task  = loop.run_in_executor(_executor, _draw_chart_us, query, path_d, path_w)
 
@@ -318,11 +317,7 @@ async def _cmd_us(event, query: str, loop):
     charts = [p for p in [path_d, path_w, path_fin] if os.path.exists(p)]
     if charts:
         await bot_client.send_file(MY_TELEGRAM_ID, charts)
-        for p in charts:
-            try:
-                os.remove(p)
-            except OSError as e:
-                log.debug("차트 파일 삭제 실패 %s: %s", p, e)
+        cleanup_files(charts)
 
 
 async def _cmd_dart_filings(event, comp: str, loop):

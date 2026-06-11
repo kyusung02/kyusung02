@@ -10,7 +10,7 @@ import asyncio
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from storage import (
-    resolve_ticker_input, load_portfolio, load_watchlist,
+    resolve_ticker_input, collect_us_name_map,
     load_seen_earnings, save_seen_earnings,
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
@@ -65,22 +65,9 @@ async def handle_earnings(event, args_text: str):
     )
 
 
-def _collect_us_tickers_for_alert() -> dict[str, str]:
-    """보유 + 관심 종목 중 미국 종목만 추출. ticker → 표시 이름 매핑 반환."""
-    name_map: dict[str, str] = {}
-    for tk, data in (load_portfolio() or {}).items():
-        if data.get('market') == 'US':
-            name_map[tk] = data.get('name', tk)
-    for nm in load_watchlist():
-        tk, mk, disp = resolve_ticker_input(nm, get_kr_ticker, US_STOCK_MAP)
-        if tk and mk == 'US' and tk not in name_map:
-            name_map[tk] = disp
-    return name_map
-
-
 async def check_and_notify_imminent_earnings():
     """스케줄러용 — D-0/D-1 어닝을 본인에게 푸시. 같은 (ticker,date) 키는 1회만 발송."""
-    name_map = _collect_us_tickers_for_alert()
+    name_map = collect_us_name_map(get_kr_ticker, US_STOCK_MAP)
     if not name_map:
         return
 

@@ -14,7 +14,18 @@ _USD_KRW_FALLBACK = 1350.0
 
 
 def get_current_price(ticker: str) -> float | None:
-    """yfinance 현재가(장중) 또는 최근 종가. 실패/빈 응답 시 None."""
+    """현재가(장중) 또는 최근 종가. 실패/빈 응답 시 None.
+
+    국내(.KS/.KQ) 종목은 네이버 우선 — yfinance가 코스닥 소형주에서 가격이
+    전일 종가에 머무는 문제 회피(KX하이텍 사례). 실패 시 yfinance 폴백.
+    """
+    if ticker.endswith(('.KS', '.KQ')):
+        # 지연 import — services.stock은 config(DART 키)를 요구하므로
+        # 테스트 등 config 없는 환경에서도 이 모듈 import가 깨지지 않게 한다.
+        from services.stock import get_kr_price_naver
+        price = get_kr_price_naver(ticker)
+        if price is not None:
+            return price
     try:
         t = yf.Ticker(ticker)
         try:

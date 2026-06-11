@@ -9,15 +9,7 @@ import asyncio
 from clients import bot_client, _executor
 from utils import kst_today
 from config import BROADCAST_ID, DART_ALERT_KEYWORDS
-from services.dart_service import (
-    DART_FILING_URL,
-    stock_code_from_ticker,
-    get_finance_summary_sync,
-    get_corp_overview_sync,
-    get_dart_recent_filings_sync,
-    get_quarterly_financials_text_sync,
-    get_naver_research_sync,
-)
+from services.dart_service import DART_FILING_URL, get_finance_summary_sync
 from services.stock import dart
 from storage import load_watchlist, load_seen_filings, save_seen_filings
 
@@ -30,31 +22,17 @@ _EARNINGS_KEYWORDS = (
 )
 
 
-# 하위 호환 — main.py / report.py에서 기존 이름으로 import 가능하도록 노출
-_stock_code_from_ticker          = stock_code_from_ticker
-_get_finance_summary_sync        = get_finance_summary_sync
-_get_corp_overview_sync          = get_corp_overview_sync
-_get_dart_recent_filings_sync    = get_dart_recent_filings_sync
-_get_quarterly_financials_text_sync = get_quarterly_financials_text_sync
-_get_naver_research_sync         = get_naver_research_sync
-
-
-async def get_finance_summary(company: str) -> str:
-    """DART 재무 분석 async 래퍼."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, get_finance_summary_sync, company)
-
-
 async def check_dart_watchlist():
     """관심종목 DART 공시를 주기적으로 확인합니다."""
     stocks = load_watchlist()
     if not stocks:
         return
 
-    seen     = load_seen_filings()
-    today    = kst_today().strftime('%Y-%m-%d')
-    loop     = asyncio.get_running_loop()
-    new_seen = list(seen)
+    seen       = load_seen_filings()
+    seen_count = len(seen)
+    today      = kst_today().strftime('%Y-%m-%d')
+    loop       = asyncio.get_running_loop()
+    new_seen   = list(seen)
 
     for comp in stocks:
         try:
@@ -97,5 +75,5 @@ async def check_dart_watchlist():
         except Exception as e:
             log.warning("DART watchlist check failed for %s: %s", comp, e)
 
-    if len(new_seen) > len(load_seen_filings()):
+    if len(new_seen) > seen_count:
         save_seen_filings(new_seen)

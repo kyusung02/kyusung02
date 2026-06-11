@@ -40,6 +40,8 @@ services/
 data/                   ← 영속 JSON (watchlist, channels, portfolio, alerts 등)
 charts/                 ← 차트 PNG 임시 저장 (전송 후 삭제)
 downloads/              ← PDF 임시 저장 (분석 후 삭제)
+tests/                  ← pytest 유닛 테스트 (알림 판정·매매 기록·포트폴리오 평가)
+conftest.py             ← 테스트용 config 스텁 (DATA_DIR→임시폴더, 실데이터 보호)
 ```
 
 ## 명령어 목록
@@ -82,7 +84,8 @@ downloads/              ← PDF 임시 저장 (분석 후 삭제)
 2. 함수명/변수명 오타 확인
 3. 기존 코드와 충돌 여부 확인
 4. `python -m py_compile`로 문법 검사
-5. 검토 결과를 한국어로 요약
+5. 알림 판정·매매 기록·평가 로직 수정 시 `python -m pytest tests/ -q` 실행
+6. 검토 결과를 한국어로 요약
 
 ### 추가 규칙
 - `handlers/` 수정 시 `main.py`의 라우팅·import 연결 확인

@@ -286,3 +286,22 @@ def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str
     if name.replace('.', '').replace('-', '').isalpha() and name.isascii():
         return name.upper(), "US", name.upper()
     return None, "", ""
+
+
+def collect_us_name_map(get_kr_ticker_fn, us_map: dict, portfolio: dict | None = None) -> dict[str, str]:
+    """보유(portfolio) + 관심(watchlist) 종목 중 미국 종목만 추출 — ticker → 표시 이름.
+
+    국내 종목은 yfinance 어닝 데이터가 거의 비어 있어 제외.
+    portfolio 미전달 시 직접 로드. (earnings/market 핸들러 공용 — 중복 구현 금지)
+    """
+    if portfolio is None:
+        portfolio = load_portfolio()
+    name_map: dict[str, str] = {}
+    for tk, data in (portfolio or {}).items():
+        if data.get('market') == 'US':
+            name_map[tk] = data.get('name', tk)
+    for nm in load_watchlist():
+        tk, mk, disp = resolve_ticker_input(nm, get_kr_ticker_fn, us_map)
+        if tk and mk == 'US' and tk not in name_map:
+            name_map[tk] = disp
+    return name_map

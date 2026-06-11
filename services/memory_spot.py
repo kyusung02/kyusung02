@@ -19,6 +19,7 @@ from datetime import datetime
 
 import yfinance as yf
 from services.semi import _safe_close_series, _pct_change
+from utils import safe_opener, is_url_safe
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ def fetch_dram_spot() -> list[dict]:
     """DRAMeXchange 현물가 → SPOT_ITEMS 순서의 dict 리스트. 실패/미매칭 시 []."""
     try:
         req = urllib.request.Request(DRAMX_URL, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with safe_opener.open(req, timeout=20) as resp:
             html = resp.read().decode("utf-8", "ignore")
     except Exception as e:
         log.warning("DRAMeXchange fetch 실패: %s", e)
@@ -186,7 +187,7 @@ def fetch_trendforce_memory_article() -> dict | None:
     """
     try:
         req = urllib.request.Request(TRENDFORCE_LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with safe_opener.open(req, timeout=20) as resp:
             html = resp.read().decode("utf-8", "ignore")
     except Exception as e:
         log.warning("TrendForce 목록 fetch 실패: %s", e)
@@ -218,9 +219,12 @@ def fetch_article_text(url: str, max_len: int = 9000) -> str:
     앞부분에 사이트 내비게이션 메뉴(~2.5천자)가 붙으므로 넉넉히 자른다(본문이 잘리지 않게).
     프롬프트에서 메뉴/광고 텍스트는 무시하도록 지시한다.
     """
+    if not is_url_safe(url):
+        log.warning("fetch_article_text: SSRF 가드로 차단된 URL — %s", url)
+        return ""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with safe_opener.open(req, timeout=20) as resp:
             html = resp.read().decode("utf-8", "ignore")
     except Exception as e:
         log.warning("TrendForce 기사 fetch 실패(%s): %s", url, e)
