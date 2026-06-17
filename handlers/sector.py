@@ -122,26 +122,59 @@ def _fetch_sector_data() -> dict:
         log.error("yfinance 배치 다운로드 실패: %s", e)
         return {}
 
-    def _get_close(ticker: str):
+    def _series(ticker: str):
         try:
             if len(all_tickers) > 1:
-                lvl0 = raw.columns.get_level_values(0)
-                if ticker not in lvl0:
+                if ticker not in raw.columns.get_level_values(0):
                     return None
                 s = raw[ticker]["Close"].dropna()
             else:
                 s = raw["Close"].dropna()
-            return s if len(s) >= 2 else None
+            return s if len(s) >= 1 else None
         except Exception:
             return None
+
+    # 배치 다운로드된 모든 종목 날짜의 합집합 = 가장 완전한 '거래일 달력'.
+    # 개별 종목 바가 누락돼도(예: HPSP 06-16) 다른 종목·지수가 그 날을 채운다.
+    series_map   = {t: _series(t) for t in all_tickers}
+    trading_days = sorted({d.date() for s in series_map.values()
+                           if s is not None for d in s.index})
+
+    def _day_change(ticker: str):
+        """(cur, prev) 반환. prev는 '직전 거래일' 종가.
+
+        종목 바가 누락돼 직전 거래일 종가가 시리즈에 없으면(예: HPSP 06-16),
+        iloc[-2]가 이틀 전을 집어 다중일 변동률이 '전일 대비'로 둔갑한다.
+        이 경우 yfinance 공식 previous_close로 보정하고, 그래도 없으면 None.
+        """
+        s = series_map.get(ticker)
+        if s is None or len(s) < 1:
+            return None
+        cur     = float(s.iloc[-1])
+        cur_day = s.index[-1].date()
+        priors  = [d for d in trading_days if d < cur_day]
+        if not priors:
+            return None
+        expected_prev = priors[-1]
+        if len(s) >= 2 and s.index[-2].date() == expected_prev:
+            return cur, float(s.iloc[-2])
+        # 직전 거래일 바 누락 → 공식 전일종가로 보정 (갭난 종목만 추가 호출)
+        try:
+            pc = float(yf.Ticker(ticker).fast_info.previous_close)
+            if pc > 0:
+                return cur, pc
+        except Exception:
+            pass
+        log.warning("%s 직전 거래일(%s) 종가 누락 — 변동률 생략", ticker, expected_prev)
+        return None
 
     result = {"sectors": {}, "indices": {}, "top_gainers": [], "top_losers": []}
 
     for idx_name, idx_ticker in _INDEX_TICKERS.items():
-        s = _get_close(idx_ticker)
-        if s is None:
+        dc = _day_change(idx_ticker)
+        if dc is None:
             continue
-        cur, prev = float(s.iloc[-1]), float(s.iloc[-2])
+        cur, prev = dc
         result["indices"][idx_name] = {
             "price":   cur,
             "chg_pct": (cur - prev) / prev * 100,
@@ -151,10 +184,10 @@ def _fetch_sector_data() -> dict:
     for sector, stocks in KR_SECTORS.items():
         changes, stock_rows = [], []
         for name, ticker in stocks:
-            s = _get_close(ticker)
-            if s is None:
+            dc = _day_change(ticker)
+            if dc is None:
                 continue
-            cur, prev = float(s.iloc[-1]), float(s.iloc[-2])
+            cur, prev = dc
             chg = (cur - prev) / prev * 100
             changes.append(chg)
             stock_rows.append((name, chg))
