@@ -38,12 +38,15 @@ def _fetch_us_morning_data() -> str:
     lines = []
     for name, sym in _MORNING_TICKERS.items():
         try:
-            hist = yf.Ticker(sym).history(period='2d')
-            if hist.empty or len(hist) < 1:
-                lines.append(f"{name}: 데이터 없음")
+            # period='2d'는 거래일 경계/타임존 때문에 1행만 돌아오는 경우가 잦다
+            # (특히 07시 장전 KOSPI/KOSDAQ). 1행이면 prev=cur가 되어 0.0% 보합으로
+            # 둔갑하므로, 넉넉히 5d를 받아 마지막 두 '행'으로 등락을 계산한다.
+            hist = yf.Ticker(sym).history(period='5d')
+            if hist.empty or len(hist) < 2:
+                lines.append(f"{name}: 데이터 부족(거래일 {len(hist)}일)")
                 continue
             cur   = hist['Close'].iloc[-1]
-            prev  = hist['Close'].iloc[-2] if len(hist) >= 2 else cur
+            prev  = hist['Close'].iloc[-2]
             chg   = cur - prev
             pct   = chg / prev * 100 if prev else 0
             arrow = '▲' if chg >= 0 else '▼'
