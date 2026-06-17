@@ -36,15 +36,45 @@ _MORNING_TICKERS = {
 def _fetch_us_morning_data() -> str:
     """yfinance로 글로벌 시장 주요 지표 수집 (동기 함수 - executor에서 실행)"""
     lines = []
+
+    # 한국 지수는 직전 거래일 일봉이 yfinance에서 누락되는 경우가 잦다. 갭이 있으면
+    # iloc[-2]가 며칠 전 종가를 집어 전일 등락이 다중일 변동률로 둔갑한다(섹터 HPSP와
+    # 동일 결함). 두 KR 지수 날짜의 합집합으로 '거래일 달력'을 만들어, 최신 바가
+    # stale하거나 직전 거래일 바가 비면 숫자를 꾸며내지 않고 '데이터 지연'으로 표시한다.
+    # (장전 07시엔 previous_close가 last와 같아 0%가 되므로 보정엔 못 쓴다 — 플래그가 정직.)
+    _KR_SYMS = ('^KS11', '^KQ11')
+    kr_hist, kr_days = {}, set()
+    for s in _KR_SYMS:
+        try:
+            h = yf.Ticker(s).history(period='5d')
+            kr_hist[s] = h
+            kr_days.update(d.date() for d in h.index)
+        except Exception as e:
+            log.warning("yfinance(%s) 조회 실패: %s", s, e)
+            kr_hist[s] = None
+    kr_calendar = sorted(kr_days)
+
     for name, sym in _MORNING_TICKERS.items():
         try:
             # period='2d'는 거래일 경계/타임존 때문에 1행만 돌아오는 경우가 잦다
             # (특히 07시 장전 KOSPI/KOSDAQ). 1행이면 prev=cur가 되어 0.0% 보합으로
             # 둔갑하므로, 넉넉히 5d를 받아 마지막 두 '행'으로 등락을 계산한다.
-            hist = yf.Ticker(sym).history(period='5d')
-            if hist.empty or len(hist) < 2:
-                lines.append(f"{name}: 데이터 부족(거래일 {len(hist)}일)")
+            hist = kr_hist[sym] if sym in _KR_SYMS else yf.Ticker(sym).history(period='5d')
+            if hist is None or hist.empty or len(hist) < 2:
+                n = 0 if hist is None else len(hist)
+                lines.append(f"{name}: 데이터 부족(거래일 {n}일)")
                 continue
+
+            # 한국 지수: 직전 거래일 바 누락(데이터 갭) 검사 — 전일% 왜곡 방지
+            if sym in _KR_SYMS and kr_calendar:
+                cur_day = hist.index[-1].date()
+                priors  = [d for d in kr_calendar if d < cur_day]
+                stale   = cur_day != kr_calendar[-1]
+                gap     = bool(priors) and hist.index[-2].date() != priors[-1]
+                if stale or gap:
+                    lines.append(f"{name}: 전일 데이터 지연(직전 거래일 종가 누락)")
+                    continue
+
             cur   = hist['Close'].iloc[-1]
             prev  = hist['Close'].iloc[-2]
             chg   = cur - prev
