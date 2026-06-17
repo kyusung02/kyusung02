@@ -130,16 +130,35 @@ def get_kr_ticker(company: str) -> str | None:
         return None
 
 
-def _price_summary(hist) -> dict:
-    """1년치 OHLC → 현재가·전일대비·기간 등락률·52주 고저 (KR/US 공용 계산)."""
+def _prev_close(t) -> float | None:
+    """yfinance 공식 전일 종가 (일봉 갭에 강건). 실패 시 None."""
+    try:
+        pc = t.fast_info.previous_close
+        return float(pc) if pc else None
+    except Exception:
+        return None
+
+
+def _price_summary(hist, prev_close=None) -> dict:
+    """1년치 OHLC → 현재가·전일대비·기간 등락률·52주 고저 (KR/US 공용 계산).
+
+    전일 종가는 yfinance 일봉이 직전 거래일 바를 누락하는 경우가 있어
+    (iloc[-2]가 며칠 전을 집어 전일 등락이 다중일로 둔갑) 공식 previous_close를
+    우선 사용한다. 없으면 직전 행으로 폴백.
+    """
     closes = hist['Close']
-    cur  = closes.iloc[-1]
-    prev = closes.iloc[-2] if len(hist) > 1 else cur
+    cur  = float(closes.iloc[-1])
+    if prev_close and prev_close > 0:
+        prev = float(prev_close)
+    elif len(closes) > 1:
+        prev = float(closes.iloc[-2])
+    else:
+        prev = cur
     chg  = cur - prev
     return {
         'cur':   cur,
         'chg':   chg,
-        'chg_p': chg / prev * 100,
+        'chg_p': chg / prev * 100 if prev else 0.0,
         'w_chg': (cur - closes.iloc[-5])  / closes.iloc[-5]  * 100 if len(hist) >= 5  else 0.0,
         'm_chg': (cur - closes.iloc[-20]) / closes.iloc[-20] * 100 if len(hist) >= 20 else 0.0,
         'ytd':   (cur - closes.iloc[0])   / closes.iloc[0]   * 100,
@@ -153,10 +172,11 @@ def _price_summary(hist) -> dict:
 def get_price_info_kr(ticker: str, company: str) -> str:
     """yfinance로 국내 주가 정보 텍스트 생성 (동기 함수 - executor에서 실행)"""
     try:
-        hist = yf.Ticker(ticker).history(period='1y')
+        t = yf.Ticker(ticker)
+        hist = t.history(period='1y')
         if hist.empty:
             return ''
-        s = _price_summary(hist)
+        s = _price_summary(hist, _prev_close(t))
         return (
             f"💰 **실시간 주가**\n"
             f"현재가: {s['cur']:,.0f}원  {s['arrow']} {s['sign']}{s['chg']:,.0f} ({s['sign']}{s['chg_p']:.1f}%)\n"
@@ -178,7 +198,7 @@ def get_us_report_text(query: str) -> str:
         if hist.empty:
             return f"❌ '{query}' 종목을 찾을 수 없습니다. (ticker: {ticker})"
 
-        s = _price_summary(hist)
+        s = _price_summary(hist, _prev_close(stock))
 
         name      = info.get('longName', ticker)
         sector    = info.get('sector', 'N/A')

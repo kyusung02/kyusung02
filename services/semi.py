@@ -12,7 +12,7 @@
 - 한국 DRAM 수출 단가(관세청)는 data.go.kr API 키 발급 후 Phase 2.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import yfinance as yf
 
 log = logging.getLogger(__name__)
@@ -112,8 +112,25 @@ def _safe_close_series(raw, ticker: str, multi: bool):
         return None
 
 
+def _bdays_strictly_between(d0, d1) -> int:
+    """d0, d1(date) 사이에 끼인 영업일(주중) 수. 두 일봉이 인접 거래일인지 판별용."""
+    n = 0
+    d = d0 + timedelta(days=1)
+    while d < d1:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
 def _pct_change(s) -> float | None:
     if s is None or len(s) < 2:
+        return None
+    # 직전 두 일봉이 영업일 기준 인접하지 않으면(=중간 거래일 바 누락) 전일 등락이
+    # 다중일 변동률로 둔갑하므로(섹터 HPSP -24% 사례) 산출하지 않고 생략한다.
+    # 시장(KR/US/JP)이 섞여 있어 단일 거래일 달력을 못 쓰므로 시장 무관 영업일
+    # 인접성으로 판별. (장전 08시라 previous_close 보정은 0%가 되어 못 씀.)
+    if _bdays_strictly_between(s.index[-2].date(), s.index[-1].date()) > 0:
         return None
     cur, prev = float(s.iloc[-1]), float(s.iloc[-2])
     if prev == 0:
