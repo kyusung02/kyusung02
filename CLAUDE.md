@@ -70,7 +70,7 @@ conftest.py             ← 테스트용 config 스텁 (DATA_DIR→임시폴더,
 ## 스케줄러 현황 (main.py)
 | 시간 | 기능 |
 |------|------|
-| 매일 07:00 | 모닝 시황 (`send_us_morning`) |
+| 평일 07:00 | 모닝 시황 (`send_us_morning`) |
 | 평일 09:00 | 증권사 리포트 (`send_daily_research`) |
 | 월 08:00 | 반도체 업황 (`send_semi_briefing`) |
 | 평일 08:30 | 어닝 D-0/D-1 푸시 (`check_and_notify_imminent_earnings`) |

@@ -419,7 +419,7 @@ async def main():
 
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='fri', hour=9,  minute=0, args=['shop'])
     scheduler.add_job(send_weekly_info, 'cron', day_of_week='thu', hour=18, minute=0, args=['out'])
-    scheduler.add_job(send_us_morning,  'cron', hour=7, minute=0)
+    scheduler.add_job(send_us_morning,  'cron', day_of_week='mon-fri', hour=7, minute=0)
 
     # 오늘의 증권사 리포트: 평일 09:00 KST. 장 시작 시점에 리포트가 충분히 올라온 뒤 발송.
     scheduler.add_job(
@@ -477,7 +477,7 @@ async def main():
         "🔹 관심종목: /watch 종목명, /unwatch 종목명, /watchlist\n"
         "🔹 포트폴리오: /거래, /portfolio (국내가는 네이버 시세)\n"
         "🔹 알림: /알림 (매 5분 자동 체크)\n"
-        "🔹 시황: /시황 (매일 07:00 자동 발송)\n"
+        "🔹 시황: /시황 (평일 07:00 자동 발송)\n"
         "🔹 섹터: /섹터 (평일 10/12/14/16시 자동 발송)\n"
         "🔹 반도체: /semi (월요일 08:00 자동 발송)\n"
         "🔹 채널 포워딩: /포워딩대상 + /포워딩추가 (원문 그대로 전달)\n"
