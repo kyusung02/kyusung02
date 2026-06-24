@@ -6,7 +6,8 @@ import asyncio
 import yfinance as yf
 from clients import bot_client, _executor
 from config import BROADCAST_ID
-from utils import kst_now
+from utils import kst_now, kst_today
+from services.gemini import generate_with_retry, build_kr_close_comment_prompt
 
 log = logging.getLogger(__name__)
 
@@ -175,9 +176,12 @@ def _fetch_sector_data() -> dict:
         if dc is None:
             continue
         cur, prev = dc
+        s = series_map.get(idx_ticker)
         result["indices"][idx_name] = {
             "price":   cur,
             "chg_pct": (cur - prev) / prev * 100,
+            # 최신 바 날짜 — 장 마감 총평의 '당일 종가 확정' 검증에 사용
+            "date":    s.index[-1].date() if s is not None and len(s) else None,
         }
 
     all_stock_list = []
@@ -244,15 +248,68 @@ def _format_message(data: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_close_summary(data: dict) -> str:
+    """Gemini 마감 총평용 결정론적 지표 요약 (수치는 전부 Python이 계산)."""
+    lines = []
+    for name, info in data.get("indices", {}).items():
+        lines.append(f"{name} 종가 {info['price']:,.2f} ({info['chg_pct']:+.2f}%)")
+    secs = sorted(data.get("sectors", {}).items(),
+                  key=lambda x: x[1]["avg_chg"], reverse=True)
+    if secs:
+        top = ", ".join(f"{n}({i['avg_chg']:+.1f}%)" for n, i in secs[:3])
+        bot = ", ".join(f"{n}({i['avg_chg']:+.1f}%)" for n, i in secs[-3:])
+        lines.append(f"강세 섹터: {top}")
+        lines.append(f"약세 섹터: {bot}")
+    g = data.get("top_gainers", [])[:3]
+    losers = data.get("top_losers", [])[:3]
+    if g:
+        lines.append("상승 상위: " + ", ".join(f"{n}(+{c:.1f}%)" for n, _s, c in g))
+    if losers:
+        lines.append("하락 상위: " + ", ".join(f"{n}({c:.1f}%)" for n, _s, c in losers))
+    return "\n".join(lines)
+
+
 async def send_kr_sector_briefing():
-    """평일 10/12/14/16시 자동 실행 + /섹터 명령어로 수동 호출 가능"""
+    """평일 10/12/14/16시 자동 실행 + /섹터 명령어로 수동 호출 가능.
+
+    16시 이후(장 마감) 실행에는 Gemini 마감 총평을 앞에 얹는다. 단 당일 종가 바가
+    아직 yfinance에 확정되지 않았으면(지연) '오늘 마감'을 단언하지 않고 경고로 대체한다
+    — 모닝 시황 stale 사고(06-23 폭락이 06-22로 둔갑)의 반대 방향 재발 방지.
+    """
     loop = asyncio.get_running_loop()
     try:
         data = await loop.run_in_executor(_executor, _fetch_sector_data)
         if not data or not data.get("sectors"):
             await bot_client.send_message(BROADCAST_ID, "⚠️ 섹터 데이터 조회에 실패했습니다.")
             return
-        await bot_client.send_message(BROADCAST_ID, _format_message(data), parse_mode="md")
+
+        msg = _format_message(data)
+
+        now = kst_now()
+        if now.hour >= 16:   # 장 마감(15:30) 이후 — 16:05 정기 실행/수동 호출
+            kospi = data.get("indices", {}).get("코스피", {})
+            if kospi.get("date") != kst_today():
+                msg = ("⚠️ **마감 데이터 확정 대기** — 당일 종가가 아직 반영되지 않아 "
+                       "아래 수치는 직전 거래일 기준일 수 있습니다.\n\n") + msg
+            else:
+                try:
+                    summary = _build_close_summary(data)
+                    prompt  = build_kr_close_comment_prompt(
+                        summary, now.strftime('%Y년 %m월 %d일'))
+                    resp = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
+                    text = getattr(resp, "text", "") or ""
+                    if text.strip():
+                        msg = text.strip() + "\n\n" + msg
+                except Exception as e:
+                    log.warning("마감 총평 생성 실패(섹터 본문은 발송): %s", e)
+
+        # Gemini 마감 총평이 섞이면 마크다운 quirk로 파싱 실패 가능 → plain 폴백으로
+        # 정상 섹터 본문까지 유실되는 사고 방지(메모: "Gemini 출력 plain 전송").
+        try:
+            await bot_client.send_message(BROADCAST_ID, msg, parse_mode="md")
+        except Exception as e:
+            log.warning("마크다운 발송 실패 → 플레인 재시도: %s", e)
+            await bot_client.send_message(BROADCAST_ID, msg)
         log.info("섹터 브리핑 전송 완료")
     except Exception as e:
         log.error("섹터 브리핑 전송 실패: %s", e)

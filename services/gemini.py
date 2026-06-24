@@ -168,6 +168,24 @@ def build_morning_market_prompt(data_block: str, today_str: str) -> str:
 {COMMON_GUIDELINES}"""
 
 
+def build_kr_close_comment_prompt(data_summary: str, today_str: str) -> str:
+    """국내 장 마감 총평 프롬프트. data_summary는 Python이 만든 결정론적 마감 지표 요약."""
+    return f"""{ANALYST_PERSONA}
+{today_str} 국내 증시 '장 마감' 데이터입니다(종가 확정 기준):
+
+{data_summary}
+
+위 데이터만 근거로 **마감 총평**을 한국어로 짧게(3~4줄) 작성하세요. 형식:
+
+🧭 **마감 총평**
+- 지수 마감: 코스피·코스닥 방향·강도 (제공된 수치만 인용)
+- 주도/부진: 강했던·약했던 섹터 (제공된 섹터 데이터 기준)
+- 특징: 등락 상·하위 종목에서 읽히는 시장 색깔 1줄
+- 관전: 야간 미국·내일 국내 체크포인트 1줄 (단정 금지, 조건부)
+
+{COMMON_GUIDELINES}"""
+
+
 # ── 생활 프롬프트 ────────────────────────────────────────────────────────────
 
 _KR_SEASON = {
