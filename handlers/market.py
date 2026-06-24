@@ -3,6 +3,7 @@
 """
 import logging
 import asyncio
+from datetime import timedelta
 import yfinance as yf
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID, BROADCAST_ID
@@ -54,6 +55,16 @@ def _fetch_us_morning_data() -> str:
             kr_hist[s] = None
     kr_calendar = sorted(kr_days)
 
+    # 절대 staleness 기준 = KST 오늘 직전의 '평일'(직전 거래일 근사). 위 ^KS11↔^KQ11
+    # 교차검증은 두 지수가 '똑같이' 한 거래일씩 묵으면(yfinance가 양쪽 최신 일봉을 동시
+    # 누락) 둘이 서로 일치해버려 못 잡는다 — 2026-06-24 사고: 06-23 폭락(-10%)이 06-22
+    # 종가(+0.7%)로 '전일' 둔갑. 최신 바가 이 직전 평일보다도 과거면 세션 하나가 통째로
+    # 빠진 것이므로 숫자를 '전일'로 단언하지 않고 지연으로 표시한다. (평일 공휴일 다음날엔
+    # 과대검출 가능하나, stale 등락을 '전일'로 내보내는 것보다 안전한 실패 방향이다.)
+    prev_weekday = kst_today() - timedelta(days=1)
+    while prev_weekday.weekday() >= 5:      # 5=토, 6=일 → 직전 평일까지 후퇴
+        prev_weekday -= timedelta(days=1)
+
     for name, sym in _MORNING_TICKERS.items():
         try:
             # period='2d'는 거래일 경계/타임존 때문에 1행만 돌아오는 경우가 잦다
@@ -71,7 +82,8 @@ def _fetch_us_morning_data() -> str:
                 priors  = [d for d in kr_calendar if d < cur_day]
                 stale   = cur_day != kr_calendar[-1]
                 gap     = bool(priors) and hist.index[-2].date() != priors[-1]
-                if stale or gap:
+                behind  = cur_day < prev_weekday   # 양쪽 동시 누락(교차검증 사각지대) 포착
+                if stale or gap or behind:
                     lines.append(f"{name}: 전일 데이터 지연(직전 거래일 종가 누락)")
                     continue
 
