@@ -11,6 +11,7 @@ from clients import bot_client, _executor
 from config import BROADCAST_ID
 from services.semi import (
     fetch_semi_data, format_semi_data_block, build_semi_briefing_prompt,
+    format_memory_export_block,
 )
 from services.gemini import generate_with_retry
 from utils import kst_now
@@ -61,6 +62,10 @@ def _format_header_message(data: dict) -> str:
         lines += ["", "─── 💥 하락 TOP 5 ───"]
         for i, (name, group, chg) in enumerate(data["top_losers"], 1):
             lines.append(f"{i}. {name}  ▼{abs(chg):.1f}%  [{group}]")
+
+    mem_block = format_memory_export_block(data.get("memory_export"))
+    if mem_block:
+        lines += ["", mem_block]
 
     return "\n".join(lines)
 

@@ -11,9 +11,13 @@
 - 빅테크 CAPEX/RPO 실 숫자는 분기 1회 수동 업데이트가 맞으므로 여기선 가격만.
 - 한국 DRAM 수출 단가(관세청)는 data.go.kr API 키 발급 후 Phase 2.
 """
+import os
 import logging
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from urllib import request, parse
 import yfinance as yf
+from utils import kst_now
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +153,131 @@ def _change_over(s, n: int) -> float | None:
     return (cur - past) / past * 100
 
 
+# ── 관세청 메모리 수출단가 (data.go.kr 수출입무역통계, Phase 2) ────────────────
+# DRAM/NAND 월별 수출액·수출단가($/kg)의 MoM/YoY = 주가 프록시로는 못 보는 공식
+# 펀더멘털 신호. DATAGO_API_KEY는 VM .env에서 os.environ으로 직접 판독(config.py
+# 동기화 불필요 — HEALTHCHECK_URL과 동일 패턴). 미설정 시 무동작이라 안전.
+_DATAGO_KEY    = os.environ.get("DATAGO_API_KEY", "").strip()
+_ITEMTRADE_URL = "https://apis.data.go.kr/1220000/Itemtrade/getItemtradeList"
+_MEM_HS        = {"8542321010": "DRAM", "8542321030": "NAND"}   # 디램 / 플래시 메모리
+
+
+def _yymm_shift(yymm: int, delta_months: int) -> int:
+    """YYYYMM 정수에 개월수 가감. 예: (202601, -2) -> 202511."""
+    y, m = divmod(yymm, 100)
+    idx = y * 12 + (m - 1) + delta_months
+    return (idx // 12) * 100 + (idx % 12) + 1
+
+
+def _yymm_to_dot(yymm: int) -> str:
+    """202505 -> '2025.05' (API year 필드 포맷)."""
+    return f"{yymm // 100}.{yymm % 100:02d}"
+
+
+def _itemtrade(strt: int, end: int) -> list:
+    """관세청 품목별 수출입실적 조회(HS 854232 메모리, strt~end 월). 실패 시 []."""
+    qs = parse.urlencode({
+        "serviceKey": _DATAGO_KEY, "strtYymm": strt, "endYymm": end, "hsSgn": "854232",
+    })
+    try:
+        with request.urlopen(f"{_ITEMTRADE_URL}?{qs}", timeout=20) as resp:
+            root = ET.fromstring(resp.read().decode("utf-8"))
+    except Exception as e:
+        log.warning("관세청 API 호출/파싱 실패(%s~%s): %s", strt, end, e)
+        return []
+    if root.findtext("./header/resultCode") != "00":
+        log.warning("관세청 API 비정상: %s / %s",
+                    root.findtext("./header/resultCode"),
+                    root.findtext("./header/resultMsg"))
+        return []
+    rows = []
+    for it in root.findall("./body/items/item"):
+        hs = (it.findtext("hsCode") or "").strip()
+        if hs not in _MEM_HS:        # 총계(hsCode '-')·기타 품목 제외
+            continue
+        try:
+            rows.append({
+                "hs":      hs,
+                "month":   (it.findtext("year") or "").strip(),   # "2026.05"
+                "exp_dlr": float(it.findtext("expDlr") or 0),
+                "exp_wgt": float(it.findtext("expWgt") or 0),
+            })
+        except ValueError:
+            continue
+    return rows
+
+
+def fetch_kr_memory_export() -> dict:
+    """한국 DRAM/NAND 월별 수출액·수출단가 + MoM/YoY (관세청). 키 없거나 실패 시 {}.
+
+    조회기간 1년 제약 때문에 2회 호출: 최근 5개월(최신월+전월) + 전년동월(YoY).
+    최신 가용월은 통관 집계 lag(보통 1~2개월)로 가변이라, 반환된 월 중 최신을 쓴다.
+    """
+    if not _DATAGO_KEY:
+        return {}
+    now = kst_now()
+    cur = now.year * 100 + now.month
+    recent = _itemtrade(_yymm_shift(cur, -4), cur)   # 가용분만 반환됨(미래월은 빠짐)
+    months = sorted({r["month"] for r in recent})
+    if not months:
+        return {}
+    m_latest = months[-1]
+    m_prev   = months[-2] if len(months) >= 2 else None
+    y, mm    = m_latest.split(".")
+    yoy_yymm = _yymm_shift(int(y) * 100 + int(mm), -12)
+    yoy      = _itemtrade(yoy_yymm, yoy_yymm)
+    yoy_key  = _yymm_to_dot(yoy_yymm)
+
+    def find(rows, hs, month):
+        return next((r for r in rows if r["hs"] == hs and r["month"] == month), None)
+
+    def unit(r):
+        return r["exp_dlr"] / r["exp_wgt"] if (r and r["exp_wgt"] > 0) else None
+
+    def chg(cur_v, base_v):
+        return (cur_v / base_v - 1) * 100 if (cur_v and base_v) else None
+
+    out = {"month": m_latest, "items": {}}
+    for hs, label in _MEM_HS.items():
+        c  = find(recent, hs, m_latest)
+        cu = unit(c)
+        if not c or cu is None:
+            continue
+        p  = find(recent, hs, m_prev)
+        yb = find(yoy, hs, yoy_key)
+        out["items"][hs] = {
+            "label":    label,
+            "exp_dlr":  c["exp_dlr"],
+            "unit":     cu,
+            "mom_val":  chg(c["exp_dlr"], p["exp_dlr"]) if p else None,
+            "mom_unit": chg(cu, unit(p)),
+            "yoy_val":  chg(c["exp_dlr"], yb["exp_dlr"]) if yb else None,
+            "yoy_unit": chg(cu, unit(yb)),
+        }
+    return out if out["items"] else {}
+
+
+def format_memory_export_block(mem: dict) -> str:
+    """fetch_kr_memory_export 결과 → 텍스트 블록(데이터 카드·Gemini 입력 공용). 빈 데이터면 ''."""
+    if not mem or not mem.get("items"):
+        return ""
+
+    def pct(x):
+        return f"{x:+.0f}%" if x is not None else "—"
+
+    lines = [f"─── 🇰🇷 한국 메모리 수출 (관세청 {mem['month']}) ───"]
+    for e in mem["items"].values():
+        lines.append(
+            f"• {e['label']}: ${e['exp_dlr'] / 1e9:.2f}B  "
+            f"MoM {pct(e['mom_val'])} · YoY {pct(e['yoy_val'])}"
+        )
+        lines.append(
+            f"    수출단가 ${e['unit']:,.0f}/kg  "
+            f"MoM {pct(e['mom_unit'])} · YoY {pct(e['yoy_unit'])}"
+        )
+    return "\n".join(lines)
+
+
 def fetch_semi_data() -> dict:
     """반도체 종목군 + ETF/지수 종가 + 변동률을 한 번에 수집.
 
@@ -220,6 +349,14 @@ def fetch_semi_data() -> dict:
     all_stock_list.sort(key=lambda x: x[2], reverse=True)
     result["top_gainers"] = all_stock_list[:5]
     result["top_losers"]  = all_stock_list[-5:][::-1]
+
+    # 관세청 메모리 수출단가(보조 신호) — 실패해도 본 데이터엔 영향 없음
+    try:
+        result["memory_export"] = fetch_kr_memory_export()
+    except Exception as e:
+        log.warning("관세청 메모리 수출 수집 실패: %s", e)
+        result["memory_export"] = {}
+
     return result
 
 
@@ -301,5 +438,9 @@ def format_semi_data_block(data: dict) -> str:
         lines.append("── 하락 TOP 5 ──")
         for name, group, chg in data["top_losers"]:
             lines.append(f"{name} [{group}]: {chg:+.2f}%")
+
+    mem_block = format_memory_export_block(data.get("memory_export"))
+    if mem_block:
+        lines += ["", mem_block]
 
     return "\n".join(lines)
