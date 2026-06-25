@@ -13,6 +13,7 @@ from services.portfolio import evaluate_portfolio, format_portfolio_message
 from utils import kst_today
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.earnings import get_upcoming_earnings_for, format_upcoming_briefing
+from services.kr_index import fetch_naver_kr_index
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,24 @@ def _fetch_us_morning_data() -> str:
     while prev_weekday.weekday() >= 5:      # 5=토, 6=일 → 직전 평일까지 후퇴
         prev_weekday -= timedelta(days=1)
 
+    # yfinance가 KR 지수를 못 줄 때(지연/데이터부족/예외)만 네이버로 폴백한 한 줄을 만든다.
+    # 07시 장전엔 yfinance에 전일 일봉이 아직 없어 '전일 데이터 지연'으로 막히는 일이 잦은데,
+    # 네이버는 마감 직후 전일 종가·등락률을 직접 줘서 그 시각에도 숫자를 보여줄 수 있다.
+    # 호출당 HTTP 1회라 실제 폴백이 필요한 KR 심볼에 한해 지연 조회하고 결과를 캐시한다.
+    _naver_cache: dict = {}
+
+    def _kr_naver_line(disp_name, yf_sym):
+        """네이버 폴백 한 줄(성공 시) 또는 None(실패 시 — 호출부가 기존 안내로 폴백)."""
+        if yf_sym not in _naver_cache:
+            _naver_cache[yf_sym] = fetch_naver_kr_index(yf_sym)
+        nv = _naver_cache[yf_sym]
+        if not nv:
+            return None
+        arrow = '▲' if nv['pct'] >= 0 else '▼'
+        sign  = '+' if nv['pct'] >= 0 else ''
+        tag   = f" ({nv['date']:%m/%d} 종가·네이버)" if nv['date'] else " (네이버)"
+        return f"{disp_name}: {nv['price']:,.2f}  {arrow} {sign}{nv['pct']:.1f}%{tag}"
+
     for name, sym in _MORNING_TICKERS.items():
         try:
             # period='2d'는 거래일 경계/타임존 때문에 1행만 돌아오는 경우가 잦다
@@ -72,6 +91,9 @@ def _fetch_us_morning_data() -> str:
             # 둔갑하므로, 넉넉히 5d를 받아 마지막 두 '행'으로 등락을 계산한다.
             hist = kr_hist[sym] if sym in _KR_SYMS else yf.Ticker(sym).history(period='5d')
             if hist is None or hist.empty or len(hist) < 2:
+                if sym in _KR_SYMS and (fb := _kr_naver_line(name, sym)):
+                    lines.append(fb)
+                    continue
                 n = 0 if hist is None else len(hist)
                 lines.append(f"{name}: 데이터 부족(거래일 {n}일)")
                 continue
@@ -84,7 +106,10 @@ def _fetch_us_morning_data() -> str:
                 gap     = bool(priors) and hist.index[-2].date() != priors[-1]
                 behind  = cur_day < prev_weekday   # 양쪽 동시 누락(교차검증 사각지대) 포착
                 if stale or gap or behind:
-                    lines.append(f"{name}: 전일 데이터 지연(직전 거래일 종가 누락)")
+                    # yfinance 일봉이 지연/누락 → 네이버로 전일 종가를 채운다. 네이버도
+                    # 실패하면 숫자를 꾸며내지 않고 기존 '전일 데이터 지연' 안내로 되돌아간다.
+                    lines.append(_kr_naver_line(name, sym)
+                                 or f"{name}: 전일 데이터 지연(직전 거래일 종가 누락)")
                     continue
 
             cur   = hist['Close'].iloc[-1]
@@ -106,6 +131,9 @@ def _fetch_us_morning_data() -> str:
                 lines.append(f"{name}: {cur:,.2f}  {arrow} {sign}{pct:.1f}%")
         except Exception as e:
             log.warning("yfinance(%s) 조회 실패: %s", sym, e)
+            if sym in _KR_SYMS and (fb := _kr_naver_line(name, sym)):
+                lines.append(fb)
+                continue
             lines.append(f"{name}: 조회 실패")
 
     return '\n'.join(lines)
