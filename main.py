@@ -38,6 +38,7 @@ from handlers.channel import (
 from handlers.forward import (
     on_forward_msg, handle_forward_target,
     handle_forward_add, handle_forward_remove, handle_forward_list,
+    handle_forward_dedup,
 )
 from handlers.finance import handle_finance, handle_us, handle_dart_filings, handle_watchlist
 from handlers.media import handle_pdf, handle_url
@@ -257,6 +258,9 @@ async def on_bot_msg(event):
     if text == '/포워딩목록':
         await handle_forward_list(event)
         return
+    if text.startswith('/포워딩중복'):
+        await handle_forward_dedup(event, text[len('/포워딩중복'):])
+        return
     if text.startswith('/포워딩대상'):
         await handle_forward_target(event, text[len('/포워딩대상'):])
         return
@@ -322,6 +326,7 @@ _HELP_TEXT = (
     "  `/포워딩추가 @채널` — 포워딩할 소스 채널 추가\n"
     "  `/포워딩삭제 @채널` — 소스 채널 삭제\n"
     "  `/포워딩목록` — 포워딩 설정·상태 확인\n"
+    "  `/포워딩중복 켜기·끄기` — 같은 자료 중복 전달 거르기 (기본 켜짐)\n"
     "    ※ 포워딩 금지 채널은 복사 전송으로 자동 폴백\n\n"
     "📈 **시황 브리핑**\n"
     "  `/시황` — 미국 3대 지수·원자재·금리·BTC·SOX·SMH 시황 즉시 조회\n"

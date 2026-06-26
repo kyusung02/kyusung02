@@ -8,18 +8,82 @@
 전제: user_client(본인 계정)가 소스 채널에 가입되어 있고,
 대상 채널에 본인 계정 글쓰기 권한이 있어야 한다(본인 소유 채널이면 기본).
 """
+import re
+import hashlib
 import logging
+import urllib.parse
 from telethon import events
 from telethon.errors import ChatForwardsRestrictedError
+from telethon.utils import get_peer_id
 from clients import user_client
 from config import DOWNLOAD_DIR
 from storage import (
     load_forward_config, set_forward_target, clear_forward_target,
     add_forward_source, remove_forward_source, normalize_channel,
+    set_forward_dedup, check_and_mark_forward_dup,
 )
 from utils import cleanup_files
 
 log = logging.getLogger(__name__)
+
+
+# ── 중복 판별용 지문 추출 ─────────────────────────────────────────────────────
+# "확실한 중복만" 거른다 — 오탐(진짜 새 글을 중복으로 오해)을 0에 가깝게.
+#   ① 텔레그램 전달본의 원본 채널+글번호 — 같은 원본을 여러 채널이 퍼날라도 정확히 일치
+#   ② 완전 동일 본문 해시 — 길이가 충분할 때만(짧은 정형구의 우연 일치 방지)
+#   ③ 같은 기사 링크 — 경로 있는 URL만(도메인 루트는 서로 다른 글이 공유 가능해 제외)
+
+_URL_RE = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+_WS_RE = re.compile(r'\s+')
+_MIN_TEXT_FP_LEN = 30   # 본문 해시 최소 길이(정규화 후) — 너무 짧으면 우연 일치 위험
+
+
+def _normalize_text(text: str) -> str:
+    """링크 제거 + 공백 정규화 + 소문자화 — 완전 동일 본문 매칭용."""
+    return _WS_RE.sub(' ', _URL_RE.sub('', text)).strip().lower()
+
+
+def _canonical_url(u: str) -> str | None:
+    """추적 파라미터·프래그먼트 제거 후 표준형 반환. 경로 없는 URL은 None."""
+    u = u.rstrip(').,?!\'">]}')   # 문장 끝 부호가 URL에 붙어온 경우 제거
+    try:
+        p = urllib.parse.urlsplit(u)
+    except ValueError:
+        return None
+    if p.scheme not in ('http', 'https') or not p.netloc:
+        return None
+    path = p.path.rstrip('/')
+    if not path:                  # 도메인 루트만 — 서로 다른 글이 공유할 수 있어 제외
+        return None
+    q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+         if not k.lower().startswith(('utm_', 'fbclid', 'gclid', 'igshid'))]
+    query = urllib.parse.urlencode(sorted(q))
+    return f"{p.netloc.lower()}{path}" + (f"?{query}" if query else "")
+
+
+def _message_fingerprints(event) -> list[str]:
+    """메시지에서 '같은 자료' 판별용 지문 목록을 추출(순서 유지·중복 제거)."""
+    fps: list[str] = []
+    msg = event.message
+    fwd = getattr(msg, 'fwd_from', None)
+    if fwd is not None:                       # ① 전달 원본 신원
+        try:
+            oid = get_peer_id(fwd.from_id) if getattr(fwd, 'from_id', None) is not None else None
+        except (TypeError, ValueError):
+            oid = None
+        post = getattr(fwd, 'channel_post', None) or getattr(fwd, 'saved_from_msg_id', None)
+        if oid is not None and post is not None:
+            fps.append(f"fwd:{oid}:{post}")
+    text = getattr(msg, 'message', None) or ''
+    if text:
+        norm = _normalize_text(text)          # ② 본문 해시
+        if len(norm) >= _MIN_TEXT_FP_LEN:
+            fps.append("txt:" + hashlib.sha1(norm.encode('utf-8')).hexdigest())
+        for raw in _URL_RE.findall(text):     # ③ 링크
+            cu = _canonical_url(raw)
+            if cu:
+                fps.append("url:" + cu)
+    return list(dict.fromkeys(fps))
 
 
 async def update_forward_handler():
@@ -43,6 +107,15 @@ async def on_forward_msg(event):
     target = cfg.get("target")
     if target is None:
         return
+    # 중복 필터 — 같은 원본/본문/링크를 최근에 이미 전달했으면 건너뜀
+    if cfg.get("dedup", True):
+        try:
+            fps = _message_fingerprints(event)
+            if check_and_mark_forward_dup(fps):
+                log.info("중복 자료 — 포워딩 건너뜀 (chat=%s, 지문 %d개)", event.chat_id, len(fps))
+                return
+        except Exception as e:  # 중복 검사 실패가 정상 전달을 막지 않도록 방어
+            log.warning("중복 검사 실패 — 그대로 전달 진행 (chat=%s): %s", event.chat_id, e)
     try:
         await user_client.forward_messages(target, event.message)
         return
@@ -131,6 +204,25 @@ async def handle_forward_remove(event, args_text: str):
     await event.reply(f"🗑️ '{normalize_channel(ch)}' 포워딩 소스에서 삭제됐습니다. (총 {len(cfg['sources'])}개)")
 
 
+async def handle_forward_dedup(event, args_text: str):
+    arg = args_text.strip().lower()
+    cur = load_forward_config().get("dedup", True)
+    if arg in ('켜기', '켜', 'on', '활성'):
+        set_forward_dedup(True)
+        await event.reply("✅ 포워딩 중복 필터 켜짐 — 같은 원본·동일 본문·같은 링크는 1번만 전달합니다.")
+        return
+    if arg in ('끄기', '꺼', 'off', '비활성', '해제'):
+        set_forward_dedup(False)
+        await event.reply("⚪ 포워딩 중복 필터 꺼짐 — 모든 메시지를 원문 그대로 전달합니다.")
+        return
+    await event.reply(
+        "사용법: /포워딩중복 켜기  또는  /포워딩중복 끄기\n"
+        f"현재 상태: {'🟢 켜짐' if cur else '⚪ 꺼짐'}\n\n"
+        "켜짐이면 같은 원본을 여러 채널이 퍼날라도 1번만, "
+        "같은 기사 링크·완전히 같은 본문도 1번만 전달합니다."
+    )
+
+
 async def handle_forward_list(event):
     cfg = load_forward_config()
     target = cfg.get('target')
@@ -145,4 +237,5 @@ async def handle_forward_list(event):
         lines.append("소스: (없음 — /포워딩추가 @채널)")
     active = bool(sources) and target is not None
     lines += ["", f"상태: {'🟢 활성' if active else '⚪ 비활성 (소스·대상 모두 설정 필요)'}"]
+    lines.append(f"중복 필터: {'🟢 켜짐' if cfg.get('dedup', True) else '⚪ 꺼짐'} (/포워딩중복 켜기·끄기)")
     await event.reply("\n".join(lines))

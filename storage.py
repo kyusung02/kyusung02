@@ -3,6 +3,7 @@
 """
 import os
 import json
+import time
 import tempfile
 import logging
 from config import DATA_DIR, WATCH_CHANNELS
@@ -33,8 +34,11 @@ PORTFOLIO_PATH    = os.path.join(DATA_DIR, "portfolio.json")
 ALERTS_PATH         = os.path.join(DATA_DIR, "alerts.json")
 SEEN_EARNINGS_PATH  = os.path.join(DATA_DIR, "seen_earnings.json")
 FORWARD_PATH        = os.path.join(DATA_DIR, "forward.json")
+FORWARD_SEEN_PATH   = os.path.join(DATA_DIR, "forward_seen.json")
 _MAX_SEEN = 1000
 _MAX_SEEN_EARNINGS = 500
+_MAX_FORWARD_SEEN = 800
+_FORWARD_SEEN_TTL = 48 * 3600  # 포워딩 중복 지문 보관 시간(초) — 같은 원본 리포스트는 보통 하루 안에 몰림
 
 
 def _parse_channel(ch):
@@ -311,10 +315,11 @@ def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str
 
 
 # ── 채널 포워딩 설정 ─────────────────────────────────────────────────────────
-# {"target": int|str|None, "sources": [int|str, ...]}
+# {"target": int|str|None, "sources": [int|str, ...], "dedup": bool}
 # 소스 채널의 새 메시지를 target 채널로 원문 그대로 전달 (handlers/forward.py).
+# dedup=True(기본)면 같은 원본·동일 본문·같은 링크의 중복을 1회만 전달.
 
-_EMPTY_FORWARD = {"target": None, "sources": []}
+_EMPTY_FORWARD = {"target": None, "sources": [], "dedup": True}
 
 
 def load_forward_config() -> dict:
@@ -329,6 +334,7 @@ def load_forward_config() -> dict:
         return {
             "target":  data.get("target"),
             "sources": [_parse_channel(ch) for ch in sources] if isinstance(sources, list) else [],
+            "dedup":   bool(data.get("dedup", True)),  # 키 없는 구버전 파일은 켜짐으로 간주
         }
     except (json.JSONDecodeError, IOError) as e:
         log.warning("forward 설정 로드 실패 — 빈 설정 반환: %s", e)
@@ -371,6 +377,68 @@ def remove_forward_source(ch) -> tuple[bool, dict]:
     cfg["sources"].remove(ch)
     save_forward_config(cfg)
     return True, cfg
+
+
+def set_forward_dedup(enabled: bool) -> dict:
+    """포워딩 중복 필터 on/off 저장 (forward.json 안에 보관 — config.py 동기화 불필요)."""
+    cfg = load_forward_config()
+    cfg["dedup"] = bool(enabled)
+    save_forward_config(cfg)
+    return cfg
+
+
+# ── 포워딩 중복 지문 (최근 본 글 기억) ────────────────────────────────────────
+# {지문문자열: 마지막으로 본 epoch초}. handlers/forward.py 가 메시지에서 추출한
+# 지문(전달 원본 신원 / 본문 해시 / 링크)과 대조해 같은 자료의 반복 전달을 막는다.
+# TTL(_FORWARD_SEEN_TTL) 경과분은 자동 청소, 개수는 _MAX_FORWARD_SEEN 으로 상한.
+
+def load_forward_seen() -> dict:
+    if not os.path.exists(FORWARD_SEEN_PATH):
+        return {}
+    try:
+        with open(FORWARD_SEEN_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        out = {}
+        for k, v in data.items():
+            try:
+                out[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("forward_seen 로드 실패 — 빈 dict 반환: %s", e)
+        return {}
+
+
+def save_forward_seen(seen: dict):
+    _atomic_json_save(FORWARD_SEEN_PATH, seen)
+
+
+def check_and_mark_forward_dup(fingerprints, now: float | None = None) -> bool:
+    """지문 중 TTL 내 이미 본 것이 있으면 True(중복)를 반환한다.
+
+    부수효과: TTL 경과 지문 청소 → 입력 지문을 현재 시각으로 기록 → 개수 상한 적용.
+    지문이 비어 있으면(메시지를 식별할 단서가 없으면) 항상 False — 못 알아보는 자료는
+    거르지 않는다(진짜 새 글을 떨어뜨리지 않는 안전한 방향).
+    """
+    fps = [str(fp) for fp in (fingerprints or []) if fp]
+    if not fps:
+        return False
+    if now is None:
+        now = time.time()
+    seen = load_forward_seen()
+    cutoff = now - _FORWARD_SEEN_TTL
+    seen = {fp: ts for fp, ts in seen.items() if ts >= cutoff}  # TTL 경과분 청소
+    is_dup = any(fp in seen for fp in fps)
+    for fp in fps:
+        seen[fp] = now
+    if len(seen) > _MAX_FORWARD_SEEN:  # 오래된 것부터 버리고 최신 _MAX_FORWARD_SEEN개 유지
+        kept = sorted(seen.items(), key=lambda kv: kv[1], reverse=True)[:_MAX_FORWARD_SEEN]
+        seen = dict(kept)
+    save_forward_seen(seen)
+    return is_dup
 
 
 def collect_us_name_map(get_kr_ticker_fn, us_map: dict, portfolio: dict | None = None) -> dict[str, str]:
