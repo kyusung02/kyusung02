@@ -74,7 +74,8 @@ def load_watchlist() -> list[str]:
         with open(WATCHLIST_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("watchlist 로드 실패 — 빈 list 반환: %s", e)
         return []
 
 
@@ -112,7 +113,8 @@ def load_channels() -> list:
         with open(CHANNELS_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return [_parse_channel(ch) for ch in data] if isinstance(data, list) else []
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        log.warning("channels 로드 실패 — 빈 list 반환: %s", e)
         return []
 
 
@@ -312,6 +314,29 @@ def resolve_ticker_input(name: str, get_kr_ticker_fn, us_map: dict) -> tuple[str
     if name.replace('.', '').replace('-', '').isalpha() and name.isascii():
         return name.upper(), "US", name.upper()
     return None, "", ""
+
+
+def resolve_ticker_from_gemini(parsed: dict, get_kr_ticker_fn, us_map: dict) -> tuple[str | None, str, str]:
+    """Gemini 파싱 결과(parsed dict) → (ticker, market, display_name).
+
+    1차: Gemini 가 직접 추출한 ticker 를 신뢰하고 형식(.KS/.KQ)으로 market 을 보정.
+    2차: ticker 가 없으면 name 으로 resolve_ticker_input 폴백.
+    /거래·/알림 자연어 핸들러가 공유한다(같은 로직을 두 곳에 복제하지 말 것).
+    """
+    name = parsed.get('name') or ''
+    gemini_ticker = (parsed.get('ticker') or '').strip()
+    gemini_market = parsed.get('market')
+
+    if gemini_ticker:
+        ticker = gemini_ticker.upper() if gemini_market == 'US' else gemini_ticker
+        if gemini_market in ('KR', 'US'):
+            market = gemini_market
+        elif ticker.endswith('.KS') or ticker.endswith('.KQ'):
+            market = 'KR'
+        else:
+            market = 'US'
+        return ticker, market, (name or ticker)
+    return resolve_ticker_input(name, get_kr_ticker_fn, us_map)
 
 
 # ── 채널 포워딩 설정 ─────────────────────────────────────────────────────────

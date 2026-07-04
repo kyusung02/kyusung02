@@ -154,7 +154,7 @@ async def send_us_morning():
     try:
         response = await loop.run_in_executor(_executor, generate_with_retry, [prompt])
     except Exception as e:
-        log.warning("Gemini 시황 요약 실패: %s", e)
+        log.warning("Gemini 시황 요약 실패: %s", e, exc_info=True)
         await bot_client.send_message(BROADCAST_ID,
             f"⚠️ 시황 분석 중 오류가 발생했습니다.\n\n📌 **원본 데이터**\n```\n{data_str}\n```"
         )

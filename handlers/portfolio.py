@@ -15,7 +15,8 @@ from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from storage import (
-    load_portfolio, add_buy, add_sell, resolve_ticker_input, rename_portfolio_ticker,
+    load_portfolio, add_buy, add_sell, rename_portfolio_ticker,
+    resolve_ticker_input, resolve_ticker_from_gemini,
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.portfolio import evaluate_portfolio, format_portfolio_message
@@ -125,7 +126,7 @@ async def handle_portfolio(event):
     try:
         result = await loop.run_in_executor(_executor, evaluate_portfolio, p)
     except Exception as e:
-        log.warning("포트폴리오 평가 실패: %s", e)
+        log.warning("포트폴리오 평가 실패: %s", e, exc_info=True)
         await event.reply("⚠️ 포트폴리오 평가 중 오류가 발생했습니다.")
         return
     await bot_client.send_message(MY_TELEGRAM_ID, format_portfolio_message(result), parse_mode='md')
@@ -204,22 +205,9 @@ async def handle_trade(event, args_text: str):
         )
         return
 
-    # 1차: Gemini가 직접 추출한 ticker 신뢰. 2차: 기존 dict 기반 fallback.
+    # 1차: Gemini가 직접 추출한 ticker 신뢰. 2차: 기존 dict 기반 fallback. (헬퍼로 통일)
     name = parsed.get('name') or ''
-    gemini_ticker = (parsed.get('ticker') or '').strip()
-    gemini_market = parsed.get('market')
-
-    if gemini_ticker:
-        ticker = gemini_ticker.upper() if gemini_market == 'US' else gemini_ticker
-        if gemini_market in ('KR', 'US'):
-            market = gemini_market
-        elif ticker.endswith('.KS') or ticker.endswith('.KQ'):
-            market = 'KR'
-        else:
-            market = 'US'
-        display = name or ticker
-    else:
-        ticker, market, display = resolve_ticker_input(name, get_kr_ticker, US_STOCK_MAP)
+    ticker, market, display = resolve_ticker_from_gemini(parsed, get_kr_ticker, US_STOCK_MAP)
 
     if not ticker:
         await notice.edit(

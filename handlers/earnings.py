@@ -77,7 +77,7 @@ async def check_and_notify_imminent_earnings():
             _executor, collect_imminent_earnings, list(name_map.keys()), 1,
         )
     except Exception as e:
-        log.warning("D-1 어닝 체크 실패: %s", e)
+        log.warning("D-1 어닝 체크 실패: %s", e, exc_info=True)
         return
     if not upcoming:
         return

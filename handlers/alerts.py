@@ -12,7 +12,8 @@ from telethon import events, Button
 from clients import bot_client, _executor
 from config import MY_TELEGRAM_ID
 from storage import (
-    load_alerts, add_alert, remove_alert_by_id, resolve_ticker_input,
+    load_alerts, add_alert, remove_alert_by_id,
+    resolve_ticker_input, resolve_ticker_from_gemini,
 )
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.alerts import check_alerts
@@ -174,7 +175,7 @@ async def check_and_notify_alerts():
     try:
         triggered = await loop.run_in_executor(_executor, check_alerts)
     except Exception as e:
-        log.warning("알림 체크 실패: %s", e)
+        log.warning("알림 체크 실패: %s", e, exc_info=True)
         return
     if not triggered:
         return
@@ -252,20 +253,7 @@ async def handle_alert_natural(event, args_text: str):
         return
 
     name = parsed.get('name') or ''
-    gemini_ticker = (parsed.get('ticker') or '').strip()
-    gemini_market = parsed.get('market')
-
-    if gemini_ticker:
-        ticker = gemini_ticker.upper() if gemini_market == 'US' else gemini_ticker
-        if gemini_market in ('KR', 'US'):
-            market = gemini_market
-        elif ticker.endswith('.KS') or ticker.endswith('.KQ'):
-            market = 'KR'
-        else:
-            market = 'US'
-        display = name or ticker
-    else:
-        ticker, market, display = resolve_ticker_input(name, get_kr_ticker, US_STOCK_MAP)
+    ticker, market, display = resolve_ticker_from_gemini(parsed, get_kr_ticker, US_STOCK_MAP)
 
     if not ticker:
         await notice.edit(f"❌ '{name}' 종목을 인식할 수 없습니다.")

@@ -21,6 +21,12 @@ if _SENTRY_DSN:
             environment=os.environ.get("SENTRY_ENV", "production"),
             traces_sample_rate=0.0,
             send_default_pii=False,
+            # send_default_pii 는 IP·이메일만 막는다. 예외 발생 시 스택의 지역 변수
+            # (보유 종목·수량·평단가 등)가 통째로 외부 Sentry 서버로 전송되는 걸 막으려면
+            # 이 옵션을 꺼야 한다(기본값 True). ⚠️ 이름 주의: 이 옵션은 sentry-sdk 1.x 에선
+            # with_locals 였으나 2.x 에서 include_local_variables 로 바뀌었다. requirements.txt 가
+            # sentry-sdk>=2.0 이므로 새 이름을 쓴다(구 이름을 쓰면 조용히 무시돼 유출이 안 막힘).
+            include_local_variables=False,
         )
     else:
         print("WARNING: SENTRY_DSN 설정됐으나 sentry-sdk 미설치 — pip install -r requirements.txt 실행 필요",
@@ -490,9 +496,20 @@ async def main():
         "📖 전체 명령어 보기: /help"
     )
 
+    # 두 클라이언트를 각각 예외 격리해서 유지한다.
+    # 과거엔 gather 기본값(return_exceptions=False) 탓에 부차 클라이언트(user_client:
+    # 채널 모니터링·포워딩)가 세션 만료·네트워크 단절로 예외를 던지면 핵심 봇(bot_client:
+    # 명령·예약 알림)까지 함께 취소돼 봇 전체가 죽었다. 아래처럼 각자 감싸면 user_client 가
+    # 죽어도 로그만 남기고 bot_client 는 계속 돈다(단, 재시작 전까지 포워딩·모니터링은 중단).
+    async def _run_client(client, label):
+        try:
+            await client.run_until_disconnected()
+        except Exception:
+            log.exception("%s 연결이 예외로 종료됨 — 재시작 전까지 해당 기능 중단", label)
+
     await asyncio.gather(
-        user_client.run_until_disconnected(),
-        bot_client.run_until_disconnected(),
+        _run_client(user_client, "user_client(채널 모니터링·포워딩)"),
+        _run_client(bot_client,  "bot_client(명령·예약 알림)"),
     )
 
 
