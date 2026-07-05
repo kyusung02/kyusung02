@@ -14,6 +14,7 @@ from utils import kst_today
 from services.stock import get_kr_ticker, US_STOCK_MAP
 from services.earnings import get_upcoming_earnings_for, format_upcoming_briefing
 from services.kr_index import fetch_naver_kr_index
+from services.macro import format_macro_lines
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +148,15 @@ async def send_us_morning():
     """
     loop     = asyncio.get_running_loop()
     data_str = await loop.run_in_executor(_executor, _fetch_us_morning_data)
+
+    # 매크로 일정(FOMC·CPI·고용보고서, 정적 테이블·네트워크 0)을 data_block에 첨부 —
+    # Gemini '리스크 & 기회' 섹션이 감이 아니라 검증된 일정을 근거로 쓰게 하고,
+    # 원본 데이터 블록에도 그대로 노출된다. 실패해도 시황 발송은 계속.
+    try:
+        if macro := format_macro_lines(days=7):
+            data_str += f"\n\n[매크로 일정 — 7일 내, KST]\n{macro}"
+    except Exception as e:
+        log.warning("매크로 일정 조회 실패: %s", e)
 
     today  = kst_today().strftime('%Y년 %m월 %d일')
     prompt = build_morning_market_prompt(data_str, today)
