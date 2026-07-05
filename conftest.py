@@ -11,4 +11,5 @@ import tempfile
 _cfg = types.ModuleType("config")
 _cfg.DATA_DIR = tempfile.mkdtemp(prefix="nemo_test_data_")
 _cfg.WATCH_CHANNELS = []
+_cfg.DART_API_KEY = "test-key-not-real"  # services.stock import용 (스텁 OpenDartReader에 전달될 뿐)
 sys.modules["config"] = _cfg

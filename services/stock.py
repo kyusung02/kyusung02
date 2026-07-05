@@ -10,6 +10,44 @@ from config import DART_API_KEY
 from utils import safe_opener
 
 log = logging.getLogger(__name__)
+
+
+def _patch_opendart_timeout(seconds: int = 30) -> None:
+    """OpenDartReader 내부 requests 호출에 기본 타임아웃 주입.
+
+    OpenDartReader는 내부 requests.get/post 전부(실측 61곳)에 timeout이 없어,
+    DART 서버가 응답을 멈추면 executor 스레드가 무한 대기하며 슬롯(4개)을
+    영구 잠식한다. 전역 socket.setdefaulttimeout()은 requests가 내부에서
+    명시적 None으로 덮어써 read 단계에 안 먹히는 것을 실측 확인(2026-07-05)
+    → 모듈별 requests 참조를 timeout 주입 래퍼로 교체하는 방식 사용.
+    dart 인스턴스 생성 전에 호출해야 corp_codes 다운로드부터 보호된다.
+    """
+    import sys
+    import functools
+    import requests as _requests
+
+    class _TimeoutRequests:
+        def __getattr__(self, name):
+            attr = getattr(_requests, name)
+            if name in ("get", "post") and callable(attr):
+                @functools.wraps(attr)
+                def _with_timeout(*args, **kwargs):
+                    kwargs.setdefault("timeout", seconds)
+                    return attr(*args, **kwargs)
+                return _with_timeout
+            return attr
+
+    shim = _TimeoutRequests()
+    for name, mod in list(sys.modules.items()):
+        if name.split(".")[0] == "OpenDartReader" and getattr(mod, "requests", None) is _requests:
+            mod.requests = shim
+
+
+try:
+    _patch_opendart_timeout()
+except Exception:  # 패치가 실패해도 봇 기동은 계속돼야 한다 (hang 안전망만 빠질 뿐)
+    log.exception("OpenDartReader 타임아웃 패치 실패")
+
 dart = OpenDartReader(DART_API_KEY)
 
 # ── 미국 종목 한글/영문 → ticker 매핑 ────────────────────────────────────────
